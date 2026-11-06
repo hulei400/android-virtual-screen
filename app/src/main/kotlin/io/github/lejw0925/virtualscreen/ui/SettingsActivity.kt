@@ -213,6 +213,13 @@ private fun BackendPreferences(app: VirtualScreenApplication, task: (suspend () 
             icon = Icons.Default.PictureInPictureAlt,
             onCheckedChange = { value -> app.settings.update { it.copy(pipEnabled = value) } },
         )
+        SwitchPreference(
+            title = l.text("只看模式", "View-only mode", "僅觀看模式"),
+            summary = l.text("全屏预览时不接管控制权，远程操作继续进行", "Fullscreen preview without taking control; remote operation continues", "全螢幕預覽時不接管控制權，遠端操作繼續進行"),
+            checked = settings.viewOnly,
+            icon = Icons.Default.Visibility,
+            onCheckedChange = { value -> app.settings.update { it.copy(viewOnly = value) } },
+        )
         ArrowPreference(
             title = l.text("系统画中画设置", "System PiP settings", "系統子母畫面設定"),
             icon = Icons.Default.PictureInPictureAlt,

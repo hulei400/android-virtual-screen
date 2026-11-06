@@ -131,7 +131,7 @@ open class MainActivity : ComponentActivity() {
             } else if(!guideDone && this !is ViewerActivity && !pip) Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
                 WindowAppearance(MaterialTheme.colorScheme.background)
                 SetupGuide(app,{ notifications.launch(Manifest.permission.POST_NOTIFICATIONS) }) {}
-            } else ViewerScreen(app,pip,{ notifications.launch(Manifest.permission.POST_NOTIFICATIONS) },{ enterPreviewPictureInPicture() },{ openSettings() },{ openSettings("MCP") },{ openSettings("BACKEND") },{ openSettings("LOGS") })
+            } else ViewerScreen(app,pip,{ notifications.launch(Manifest.permission.POST_NOTIFICATIONS) },{ enterPreviewPictureInPicture() },{ openSettings() },{ openSettings("MCP") },{ openSettings("BACKEND") },{ openSettings("LOGS") },{ app.settings.update { it.copy(viewOnly=false) }; beginPhoneSession() })
         } }
         lifecycleScope.launch { app.sessions.state.map { Triple(it.displayId,it.frame?.width,it.frame?.height) }.distinctUntilChanged().collect { geometry ->
             if(geometry.first==null) endPhoneSession()
@@ -249,6 +249,8 @@ open class MainActivity : ComponentActivity() {
         }
     }
     private fun beginPhoneSession() {
+        // View-only mode: expanding the preview must not revoke the agent's lease.
+        if(app.settings.flow.value.viewOnly) return
         if(approvalTarget != null || pip || previewDismissed || launchingPreview) return
         remotePreview=false
         app.sessions.beginPhoneSession(phoneViewer)
@@ -316,7 +318,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
     } finally { app.sessions.finishPhoneControl(lease.token) }
 }
 
-@Composable private fun ViewerScreen(app: VirtualScreenApplication,pip: Boolean,notifications: () -> Unit,onPip: () -> Unit,onSettings: () -> Unit,onConnect: () -> Unit,onBackend: () -> Unit,onLogs: () -> Unit) {
+@Composable private fun ViewerScreen(app: VirtualScreenApplication,pip: Boolean,notifications: () -> Unit,onPip: () -> Unit,onSettings: () -> Unit,onConnect: () -> Unit,onBackend: () -> Unit,onLogs: () -> Unit,onTakeover: () -> Unit = {}) {
     val l=LocalLanguage.current; val state by app.sessions.state.collectAsState(); val settings by app.settings.flow.collectAsState()
     val tool by app.mcp.activity.collectAsState(); val server by app.mcp.flow.collectAsState(); val scope=rememberCoroutineScope(); val lifecycle=LocalLifecycleOwner.current
     val tunnel by app.tunnels.flow.collectAsState()
@@ -352,7 +354,8 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
         }
     }
     BackHandler(state.displayId!=null || expanded || keyboard) {
-        when { keyboard -> keyboard=false; expanded -> expanded=false; else -> localInput(BackendOperation.Back) }
+        // In view-only mode Back only exits view-only; it must not inject Back into the virtual display.
+        when { keyboard -> keyboard=false; expanded -> expanded=false; settings.viewOnly -> app.settings.update { it.copy(viewOnly=false) }; else -> localInput(BackendOperation.Back) }
     }
     val imeVisible=WindowInsets.ime.getBottom(LocalDensity.current)>0
     val background=if(state.displayId!=null) Color.Black else MaterialTheme.colorScheme.background
@@ -361,7 +364,8 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
         if(state.displayId!=null) AndroidView(factory={ context -> LiveDisplayView(context).also { view=it } },modifier=Modifier.fillMaxSize(),onRelease={ renderer -> renderer.dispose(); if(view===renderer) view=null },update={ renderer ->
             renderer.onLiveChanged={ live=it }
             renderer.onManualDown={
-                if(pip || state.errorCode == "NO_RUNNING_APP") null
+                // View-only, like PiP, never starts a phone gesture/takeover.
+                if(pip || settings.viewOnly || state.errorCode == "NO_RUNNING_APP") null
                 else { error=null; app.sessions.beginPhoneGesture().token }
             }
             renderer.onManualComplete={ token -> app.sessions.finishPhoneControl(token) }
@@ -397,7 +401,8 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
                 error = (server.lastError ?: state.errorCode)?.let { localizedError(l, it) },
             )
         }
-        if(state.displayId!=null) FloatingControls(state,server.running,expanded,{ expanded=it },tool?.purpose,tool?.phase,live,pip,settings.pipEnabled,
+        if(state.displayId!=null) FloatingControls(state,server.running,expanded,{ expanded=it },tool?.purpose,tool?.phase,live,pip,settings.pipEnabled,settings.viewOnly,
+            onToggleViewOnly={ app.settings.update { it.copy(viewOnly=!it.viewOnly) } },onTakeover={ expanded=false; onTakeover() },
             onSettings=onSettings,onKeyboard={ expanded=false; keyboard=true },onApps={ task { applications=app.sessions.discoverApplications(includeIcons=true).filter { it.exported && it.packageName!=app.packageName }; chooseApp=true }; expanded=false },
             onPip={ expanded=false; onPip() }, onEnd={
                 val session = state.sessionId ?: return@FloatingControls
@@ -455,7 +460,8 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
 }
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3ExpressiveApi::class)
-@Composable private fun FloatingControls(state: SessionState,mcpRunning: Boolean,expanded: Boolean,onExpanded: (Boolean) -> Unit,purpose: String?,phase: String?,live: Boolean,pip: Boolean,pipEnabled: Boolean,
+@Composable private fun FloatingControls(state: SessionState,mcpRunning: Boolean,expanded: Boolean,onExpanded: (Boolean) -> Unit,purpose: String?,phase: String?,live: Boolean,pip: Boolean,pipEnabled: Boolean,viewOnly: Boolean = false,
+    onToggleViewOnly: () -> Unit = {},onTakeover: () -> Unit = {},
     onSettings: () -> Unit,onKeyboard: () -> Unit,onApps: () -> Unit,onPip: () -> Unit,onEnd: () -> Unit) {
     val l=LocalLanguage.current; val context=LocalContext.current; val host=LocalView.current
     val prefs=remember { context.getSharedPreferences("viewer_controls",0) }
@@ -463,7 +469,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
     var hidden by remember { mutableStateOf(false) }; var drag by remember { mutableStateOf<Offset?>(null) }; var measured by remember { mutableStateOf(IntSize.Zero) }
     val running=phase=="running"
     val accent=when { phase=="failed" -> MaterialTheme.colorScheme.error; running || mcpRunning -> MaterialTheme.colorScheme.primary; else -> MaterialTheme.colorScheme.onSurfaceVariant }
-    val status=when { state.lease?.owner == VirtualScreenSessionManager.PHONE_CLIENT -> l.text("手机接管中","Phone control","手機接管中"); running -> l.text("正在执行","Working","正在執行"); state.lease?.owner != null -> l.text("远程控制中","Remote control active","遠端控制中"); mcpRunning -> l.text("MCP 已就绪","MCP ready","MCP 已就緒"); else -> l.text("本地控制","Local control","本機控制") }
+    val status=when { viewOnly && state.lease?.owner != VirtualScreenSessionManager.PHONE_CLIENT -> l.text("只看中","View only","僅觀看"); state.lease?.owner == VirtualScreenSessionManager.PHONE_CLIENT -> l.text("手机接管中","Phone control","手機接管中"); running -> l.text("正在执行","Working","正在執行"); state.lease?.owner != null -> l.text("远程控制中","Remote control active","遠端控制中"); mcpRunning -> l.text("MCP 已就绪","MCP ready","MCP 已就緒"); else -> l.text("本地控制","Local control","本機控制") }
     LaunchedEffect(pip) {
         if(pip) {
             hidden=false
@@ -566,6 +572,10 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
                                     IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onKeyboard)
                                 if(pipEnabled) floatingAction(Icons.Default.PictureInPicture, l.text("画中画", "PiP", "子母畫面"),
                                     IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onPip)
+                                floatingAction(if(viewOnly) Icons.Default.VisibilityOff else Icons.Default.Visibility, l.text(if(viewOnly) "只看中" else "只看", if(viewOnly) "View only" else "View only", if(viewOnly) "僅觀看" else "僅觀看"),
+                                    IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onToggleViewOnly)
+                                if(viewOnly) floatingAction(Icons.Default.TouchApp, l.text("接管", "Take over", "接管"),
+                                    IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onTakeover)
                                 floatingAction(Icons.Default.Settings, l.text("设置", "Settings", "設定"),
                                     IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onSettings)
                                 floatingAction(Icons.Default.StopCircle, l.text("结束", "End", "結束"),
