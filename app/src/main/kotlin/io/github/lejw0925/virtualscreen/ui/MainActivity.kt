@@ -132,11 +132,20 @@ open class MainActivity : ComponentActivity() {
             } else if(!guideDone && this !is ViewerActivity && !pip) Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
                 WindowAppearance(MaterialTheme.colorScheme.background)
                 SetupGuide(app,{ notifications.launch(Manifest.permission.POST_NOTIFICATIONS) }) {}
-            } else ViewerScreen(app,pip,{ notifications.launch(Manifest.permission.POST_NOTIFICATIONS) },{ enterPreviewPictureInPicture() },{ openSettings() },{ openSettings("MCP") },{ openSettings("BACKEND") },{ openSettings("LOGS") },{ app.settings.update { it.copy(viewOnly=false) }; beginPhoneSession() })
+            } else ViewerScreen(app,pip,{ notifications.launch(Manifest.permission.POST_NOTIFICATIONS) },{ enterPreviewPictureInPicture() },{ openSettings() },{ openSettings("MCP") },{ openSettings("BACKEND") },{ openSettings("LOGS") },{
+                // 只看开关就是接管：关掉它就立即接管，打开它只是看。
+                val turningOff = app.settings.flow.value.viewOnly
+                app.settings.update { it.copy(viewOnly=!it.viewOnly) }
+                if(turningOff) beginPhoneSession()
+            })
         } }
         lifecycleScope.launch { app.sessions.state.map { Triple(it.displayId,it.frame?.width,it.frame?.height) }.distinctUntilChanged().collect { geometry ->
             if(geometry.first==null) endPhoneSession()
-            else if(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) && hasWindowFocus()) beginPhoneSession()
+            else if(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) && hasWindowFocus()) {
+                // 新画面出现时默认只看：手机没在接管才自动打开。
+                if(app.sessions.state.value.lease?.owner != VirtualScreenSessionManager.PHONE_CLIENT) app.settings.update { it.copy(viewOnly=true) }
+                beginPhoneSession()
+            }
             if(this@MainActivity is ViewerActivity && geometry.first==null) finish()
             else setPictureInPictureParams(pipParams())
         } }
@@ -158,6 +167,8 @@ open class MainActivity : ComponentActivity() {
         if(app.mcpWanted && !app.mcp.state().running) { foreground(app); app.restoreMcp() }
         if(launchingPreview && !pip) requestPreviewPictureInPicture()
         if(approvalTarget == null && !pip && !launchingPreview && !previewDismissed && app.sessions.state.value.displayId!=null) {
+            // 打开查看时默认只看：手机没在接管、不是刚从设置页回来，才自动打开。
+            if(!openingSettings && app.sessions.state.value.lease?.owner != VirtualScreenSessionManager.PHONE_CLIENT) app.settings.update { it.copy(viewOnly=true) }
             openingSettings = false
             if(this !is ViewerActivity) ViewerActivity.dismissPreview()
             beginPhoneSession()
@@ -319,7 +330,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
     } finally { app.sessions.finishPhoneControl(lease.token) }
 }
 
-@Composable private fun ViewerScreen(app: VirtualScreenApplication,pip: Boolean,notifications: () -> Unit,onPip: () -> Unit,onSettings: () -> Unit,onConnect: () -> Unit,onBackend: () -> Unit,onLogs: () -> Unit,onTakeover: () -> Unit = {}) {
+@Composable private fun ViewerScreen(app: VirtualScreenApplication,pip: Boolean,notifications: () -> Unit,onPip: () -> Unit,onSettings: () -> Unit,onConnect: () -> Unit,onBackend: () -> Unit,onLogs: () -> Unit,onToggleViewOnly: () -> Unit = {}) {
     val l=LocalLanguage.current; val state by app.sessions.state.collectAsState(); val settings by app.settings.flow.collectAsState()
     val tool by app.mcp.activity.collectAsState(); val server by app.mcp.flow.collectAsState(); val scope=rememberCoroutineScope(); val lifecycle=LocalLifecycleOwner.current
     val tunnel by app.tunnels.flow.collectAsState()
@@ -404,7 +415,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
             )
         }
         if(state.displayId!=null) FloatingControls(state,server.running,expanded,{ expanded=it },tool?.purpose,tool?.phase,live,pip,settings.pipEnabled,settings.viewOnly,
-            onToggleViewOnly={ app.settings.update { it.copy(viewOnly=!it.viewOnly) } },onTakeover={ expanded=false; onTakeover() },
+            onToggleViewOnly={ expanded=false; onToggleViewOnly() },
             onSettings=onSettings,onKeyboard={ expanded=false; keyboard=true },onApps={ task { applications=app.sessions.discoverApplications(includeIcons=true).filter { it.exported && it.packageName!=app.packageName }; chooseApp=true }; expanded=false },
             onPip={ expanded=false; onPip() }, onEnd={
                 val session = state.sessionId ?: return@FloatingControls
@@ -463,7 +474,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable private fun FloatingControls(state: SessionState,mcpRunning: Boolean,expanded: Boolean,onExpanded: (Boolean) -> Unit,purpose: String?,phase: String?,live: Boolean,pip: Boolean,pipEnabled: Boolean,viewOnly: Boolean = false,
-    onToggleViewOnly: () -> Unit = {},onTakeover: () -> Unit = {},
+    onToggleViewOnly: () -> Unit = {},
     onSettings: () -> Unit,onKeyboard: () -> Unit,onApps: () -> Unit,onPip: () -> Unit,onEnd: () -> Unit) {
     val l=LocalLanguage.current; val context=LocalContext.current; val host=LocalView.current
     val prefs=remember { context.getSharedPreferences("viewer_controls",0) }
@@ -576,8 +587,6 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
                                     IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onPip)
                                 floatingAction(if(viewOnly) Icons.Default.VisibilityOff else Icons.Default.Visibility, l.text(if(viewOnly) "只看中" else "只看", if(viewOnly) "View only" else "View only", if(viewOnly) "僅觀看" else "僅觀看"),
                                     IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onToggleViewOnly)
-                                if(viewOnly) floatingAction(Icons.Default.TouchApp, l.text("接管", "Take over", "接管"),
-                                    IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onTakeover)
                                 floatingAction(Icons.Default.Settings, l.text("设置", "Settings", "設定"),
                                     IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onSettings)
                                 floatingAction(Icons.Default.StopCircle, l.text("结束", "End", "結束"),
