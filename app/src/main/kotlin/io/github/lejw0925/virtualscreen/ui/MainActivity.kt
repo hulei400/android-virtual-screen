@@ -1,6 +1,7 @@
 package io.github.lejw0925.virtualscreen.ui
 
 import android.Manifest
+import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.Intent
 import android.os.Build
@@ -354,8 +355,9 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
         }
     }
     BackHandler(state.displayId!=null || expanded || keyboard) {
-        // In view-only mode Back only exits view-only; it must not inject Back into the virtual display.
-        when { keyboard -> keyboard=false; expanded -> expanded=false; settings.viewOnly -> app.settings.update { it.copy(viewOnly=false) }; else -> localInput(BackendOperation.Back) }
+        // In view-only mode Back only leaves the fullscreen viewer; it must not
+        // inject Back into the virtual display, and must not turn the setting off.
+        when { keyboard -> keyboard=false; expanded -> expanded=false; settings.viewOnly -> if(settings.pipEnabled) onPip() else (context as? Activity)?.finish(); else -> localInput(BackendOperation.Back) }
     }
     val imeVisible=WindowInsets.ime.getBottom(LocalDensity.current)>0
     val background=if(state.displayId!=null) Color.Black else MaterialTheme.colorScheme.background
