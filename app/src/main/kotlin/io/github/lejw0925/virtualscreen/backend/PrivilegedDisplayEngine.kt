@@ -225,9 +225,13 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
             val resizeMode = ActivityInfo::class.java.getField("resizeMode").getInt(info)
             ActivityInfo::class.java.getDeclaredMethod("isResizeableMode", Int::class.javaPrimitiveType).invoke(null, resizeMode) == true
         }.getOrDefault(true)
-        fun matchesTarget(task: ActivityManager.RunningTaskInfo): Boolean = if (diagnostic) {
+        // Match by component, not by package: two activities of one app can
+        // own separate tasks (different taskAffinity, e.g. Edge's main window
+        // and its second-window activity). Only the same activity running on
+        // another display counts as "elsewhere" and triggers the
+        // restart/force-stop path.
+        fun matchesTarget(task: ActivityManager.RunningTaskInfo): Boolean =
             task.baseActivity == target || task.topActivity == target
-        } else task.baseActivity?.packageName == target.packageName || task.topActivity?.packageName == target.packageName
         val elsewhere = runningTasks().any { matchesTarget(it) && taskDisplay(it) != displayId }
         if (elsewhere) {
             if (!request.optBoolean("restartApproved")) return JSONObject().put("ok", false).put("code", "APP_RESTART_CONFIRMATION_REQUIRED").put("packageName", target.packageName).put("component", target.flattenToString())
