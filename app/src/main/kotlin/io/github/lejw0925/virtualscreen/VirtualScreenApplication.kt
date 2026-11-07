@@ -17,6 +17,7 @@ import io.github.lejw0925.virtualscreen.core.VirtualScreenSessionManager
 import io.github.lejw0925.virtualscreen.mcp.McpServerController
 import io.github.lejw0925.virtualscreen.tunnel.TunnelManager
 import io.github.lejw0925.virtualscreen.tunnel.TunnelMode
+import io.github.lejw0925.virtualscreen.ui.FloatViewer
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -151,18 +152,46 @@ class VirtualScreenApplication : Application() {
         })
         runtimeScope.launch {
             var lastDisplayId: Int? = null
+            var retryJob: Job? = null
             sessions.state.collect { s ->
                 val id = s.displayId
-                if (id != null && id != lastDisplayId && !floatViewer.isShowing &&
-                    io.github.lejw0925.virtualscreen.ui.FloatViewer.canDrawOverlays(this@VirtualScreenApplication)) {
-                    runCatching { floatViewer.show() }
-                    val activity = resumedActivity
-                    if (activity is io.github.lejw0925.virtualscreen.ui.MainActivity) {
-                        mainHandler.post { runCatching { activity.moveTaskToBack(true) } }
+                if (id != null && id != lastDisplayId) {
+                    // New display: the float window is the default view.
+                    // A single show() can be lost (a racing hide from the
+                    // viewer resuming, a main-thread timing slip), so retry
+                    // for a few seconds. The retry stops as soon as the
+                    // window is up, or as soon as the user deliberately goes
+                    // fullscreen (that sets the suppression flag, so the loop
+                    // never fights the user's choice).
+                    floatViewer.clearAutoShowSuppression()
+                    retryJob?.cancel()
+                    retryJob = launch {
+                        repeat(6) {
+                            if (floatViewer.isShowing || floatViewer.autoShowSuppressed) {
+                                maybeMoveViewerToBackground()
+                                return@launch
+                            }
+                            if (sessions.state.value.displayId == null) return@launch
+                            if (FloatViewer.canDrawOverlays(this@VirtualScreenApplication)) {
+                                runCatching { floatViewer.show() }
+                            }
+                            delay(700)
+                        }
+                        if (floatViewer.isShowing) maybeMoveViewerToBackground()
                     }
                 }
                 lastDisplayId = id
             }
+        }
+    }
+
+    /** Send the fullscreen viewer to the background, but only when the float
+     *  window is actually showing — never yank the user out of a viewer they
+     *  opened deliberately. */
+    private fun maybeMoveViewerToBackground() {
+        val activity = resumedActivity
+        if (activity is io.github.lejw0925.virtualscreen.ui.MainActivity && floatViewer.isShowing) {
+            mainHandler.post { runCatching { activity.moveTaskToBack(true) } }
         }
     }
 

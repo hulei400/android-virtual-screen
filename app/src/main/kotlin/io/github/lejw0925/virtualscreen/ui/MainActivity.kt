@@ -170,7 +170,8 @@ open class MainActivity : ComponentActivity() {
             // 打开查看时默认只看：手机没在接管、不是刚从设置页回来，才自动打开。
             if(!openingSettings && app.sessions.state.value.lease?.owner != VirtualScreenSessionManager.PHONE_CLIENT) app.settings.update { it.copy(viewOnly=true) }
             // 回到全屏查看时收起悬浮窗： live 镜像一次只给一个查看器，全屏接手后悬浮窗会黑屏。
-            if(!openingSettings) app.floatViewer.hide()
+            // 这是用户主动进全屏：同时抑制自动弹，免得自动弹的重试又把它顶回来。
+            if(!openingSettings) { app.floatViewer.hide(); app.floatViewer.suppressAutoShow() }
             openingSettings = false
             if(this !is ViewerActivity) ViewerActivity.dismissPreview()
             beginPhoneSession()
@@ -201,7 +202,7 @@ open class MainActivity : ComponentActivity() {
         if(approvalTarget == null && !previewDismissed && !pip && !launchingPreview && !openingSettings && !app.floatViewer.isShowing && app.sessions.state.value.displayId!=null) {
             // 退回桌面：画中画开着就进画中画，关了就自动弹悬浮窗，不用手动点。
             if(app.settings.flow.value.pipEnabled) enterPreviewPictureInPicture()
-            else if(FloatViewer.canDrawOverlays(app)) app.floatViewer.show()
+            else if(FloatViewer.canDrawOverlays(app)) { app.floatViewer.clearAutoShowSuppression(); app.floatViewer.show() }
         }
     }
     override fun onStop() {
