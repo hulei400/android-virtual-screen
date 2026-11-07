@@ -164,6 +164,7 @@ open class MainActivity : ComponentActivity() {
     }
     override fun onResume() {
         super.onResume()
+        app.viewerForeground = true
         if(app.mcpWanted && !app.mcp.state().running) { foreground(app); app.restoreMcp() }
         if(launchingPreview && !pip) requestPreviewPictureInPicture()
         if(approvalTarget == null && !pip && !launchingPreview && !previewDismissed && app.sessions.state.value.displayId!=null) {
@@ -193,10 +194,16 @@ open class MainActivity : ComponentActivity() {
         super.onWindowFocusChanged(hasFocus)
         if(hasFocus && !isInPictureInPictureMode && !launchingPreview && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) && app.sessions.state.value.displayId!=null) beginPhoneSession()
     }
+    override fun onPause() {
+        app.viewerForeground = false
+        super.onPause()
+    }
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if(approvalTarget == null && !previewDismissed && !pip && !launchingPreview && !openingSettings && !app.floatViewer.isShowing && app.settings.flow.value.pipEnabled && app.sessions.state.value.displayId!=null) {
-            enterPreviewPictureInPicture()
+        if(approvalTarget == null && !previewDismissed && !pip && !launchingPreview && !openingSettings && !app.floatViewer.isShowing && app.sessions.state.value.displayId!=null) {
+            // 退回桌面：画中画开着就进画中画，关了就自动弹悬浮窗，不用手动点。
+            if(app.settings.flow.value.pipEnabled) enterPreviewPictureInPicture()
+            else if(FloatViewer.canDrawOverlays(app)) app.floatViewer.show()
         }
     }
     override fun onStop() {

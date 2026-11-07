@@ -109,6 +109,10 @@ class VirtualScreenApplication : Application() {
         private set
     internal val floatViewer by lazy { io.github.lejw0925.virtualscreen.ui.FloatViewer(this) }
 
+    /** True while the fullscreen viewer is what the user is looking at; the
+     *  float window must not pop over it when a display appears. */
+    @Volatile var viewerForeground = false
+
     override fun onCreate() {
         super.onCreate()
         activityLog = ActivityLog(this)
@@ -124,6 +128,21 @@ class VirtualScreenApplication : Application() {
                 if (result == PackageManager.PERMISSION_GRANTED) "granted" else "denied")
             if(requestCode == 8732 && result == PackageManager.PERMISSION_GRANTED) runtimeScope.launch {
                 runCatching { sessions.ensureAccessibility() }.onFailure { activityLog.failure("accessibility_enable", it) }
+            }
+        }
+        // A connection creates the display while the user is elsewhere: pop the
+        // float window by default (PiP is off) so they can watch without opening
+        // the app. Skipped when the fullscreen viewer is already in front, and
+        // when the overlay permission has not been granted yet.
+        runtimeScope.launch {
+            var lastDisplayId: Int? = null
+            sessions.state.collect { s ->
+                val id = s.displayId
+                if (id != null && id != lastDisplayId && !viewerForeground && !floatViewer.isShowing &&
+                    io.github.lejw0925.virtualscreen.ui.FloatViewer.canDrawOverlays(this@VirtualScreenApplication)) {
+                    runCatching { floatViewer.show() }
+                }
+                lastDisplayId = id
             }
         }
     }

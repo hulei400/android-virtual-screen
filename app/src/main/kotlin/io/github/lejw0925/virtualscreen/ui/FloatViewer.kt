@@ -286,6 +286,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                 val frame = s.frame
                 liveView?.setTarget(s.sessionId, app.sessions.liveChannel,
                     LiveGeometry(frame?.width ?: s.config.width, frame?.height ?: s.config.height, s.frameRotation), frame)
+                fitToFrameAspect()
             }
         }
         previewJob = scope.launch {
@@ -340,22 +341,50 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         if (isDouble) lastTapTime = 0L
         return isDouble
     }
+    /** Keep the window glued to the live frame aspect: a stale or pinched size
+     *  otherwise leaves black bars on the sides (or top/bottom). Runs on every
+     *  frame but is a no-op once the aspect matches (2% deadband). */
+    private fun fitToFrameAspect() {
+        if (collapsed) return
+        val p = params ?: return
+        if (p.width <= 0 || p.height <= 0) return
+        val aspect = currentAspect()
+        if (aspect <= 0f || !aspect.isFinite()) return
+        val winAspect = p.width.toFloat() / p.height
+        if (abs(winAspect - aspect) / aspect < 0.02f) return
+        var h = (p.width / aspect).roundToInt()
+        var w = p.width
+        if (h > maxHeightPx) { h = maxHeightPx; w = (h * aspect).roundToInt() }
+        if (w == p.width && h == p.height) return
+        p.width = w; p.height = h
+        p.x = p.x.coerceIn(0, (screenW - p.width).coerceAtLeast(0))
+        p.y = p.y.coerceIn(0, (screenH - p.height).coerceAtLeast(0))
+        updateLayout()
+    }
     private fun currentAspect(): Float {
         val s = app.sessions.state.value
         val w = s.frame?.width ?: s.config.width; val h = s.frame?.height ?: s.config.height
         return if (w > 0 && h > 0) w.toFloat() / h else 0.5f
     }
     private fun defaultSize(state: SessionState): Pair<Int, Int> {
-        val aspect = (state.config.width.toFloat() / state.config.height).takeIf { it.isFinite() && it > 0 } ?: 0.5f
-        var w = (360f * density).roundToInt()
+        // Live frame aspect (falls back to the display config): the window must
+        // match it, or the fitted frame letterboxes with black bars on the sides.
+        val aspect = currentAspect()
+        var w = (320f * density).roundToInt().coerceIn(minWidthPx, maxWidthPx)
         var h = (w / aspect).roundToInt()
         if (h > maxHeightPx) { h = maxHeightPx; w = (h * aspect).roundToInt() }
-        return w.coerceIn(minWidthPx, maxWidthPx) to h
+        return w to h
     }
     private fun restoredSize(state: SessionState): Pair<Int, Int> {
+        val aspect = currentAspect()
         val w = prefs.getInt("width", 0); val h = prefs.getInt("height", 0)
         if (w <= 0 || h <= 0) return defaultSize(state)
-        return w.coerceIn(minWidthPx, maxWidthPx) to h.coerceIn(1, maxHeightPx)
+        // A saved height may predate the current frame: re-derive it from the
+        // saved width and the live frame aspect instead of trusting it.
+        var rw = w.coerceIn(minWidthPx, maxWidthPx)
+        var rh = (rw / aspect).roundToInt()
+        if (rh > maxHeightPx) { rh = maxHeightPx; rw = (rh * aspect).roundToInt() }
+        return rw to rh
     }
     private fun restoredPosition(w: Int, h: Int): Pair<Int, Int> {
         val x = prefs.getInt("pos_x", -1); val y = prefs.getInt("pos_y", -1)
