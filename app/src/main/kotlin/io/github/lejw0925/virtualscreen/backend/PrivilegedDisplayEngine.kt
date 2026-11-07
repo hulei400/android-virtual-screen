@@ -214,7 +214,11 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
         val diagnostic = target.packageName == io.github.lejw0925.virtualscreen.BuildConfig.APPLICATION_ID &&
             target.className == io.github.lejw0925.virtualscreen.ui.BackendProbeActivity::class.java.name
         require(target.packageName != request.optString("ownerPackage") || diagnostic) { "APP_NOT_LAUNCHABLE" }
-        require(info.enabled && info.exported) { "APP_NOT_LAUNCHABLE" }
+        // Non-exported activities are no longer rejected here: the launch goes
+        // through the root shell's `am start`, so the system's own exported
+        // check (if any) decides instead. Only a disabled component is
+        // still refused locally.
+        require(info.enabled) { "APP_NOT_LAUNCHABLE" }
         // Non-resizeable activities still launch on a secondary display; the window
         // manager letterboxes them at their own size. Only report the flag.
         val resizeable = runCatching {
