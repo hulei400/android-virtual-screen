@@ -159,9 +159,9 @@ internal object RuntimeNotification {
             content.approval != null -> approvalActions(context, content.approval).forEach(builder::addAction)
             content.displaySession != null -> {
                 // Fluid Cloud toggle: in control mode the action offers 只看
-                // (back to view-only), otherwise 接管. Same switch as the
-                // float window's double-tap, so the window itself needs no
-                // button over the content.
+                // (back to view-only), otherwise 接管. The card is now the
+                // only toggle — the float window has no button or gesture
+                // for it, so nothing sits over the content.
                 if (content.controlMode) {
                     builder.addAction(notificationAction(context, R.drawable.ic_notification_takeover,
                         R.string.notification_view_only, action(2, VirtualScreenForegroundService.ACTION_VIEW_ONLY)))

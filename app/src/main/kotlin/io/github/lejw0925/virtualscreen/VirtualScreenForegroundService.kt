@@ -214,7 +214,7 @@ class VirtualScreenForegroundService : Service() {
             ACTION_STOP -> { app.sessions.phoneTakeover(); app.stopRuntime(); stopSelf() }
             ACTION_TAKEOVER -> if (isCurrentDisplayAction(intent)) {
                 // Fluid Cloud toggle: take the lease AND flip the float
-                // window into control mode, same as its double-tap.
+                // window into control mode.
                 app.sessions.phoneTakeover()
                 app.floatViewer.setControlModeExternal(true)
             }
