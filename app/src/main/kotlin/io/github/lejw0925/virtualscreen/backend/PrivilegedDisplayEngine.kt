@@ -283,7 +283,7 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
      * start would reuse the virtual task by affinity and pull it to the
      * phone; MULTIPLE_TASK forces a new phone task instead. For singleTask
      * activities the system ignores MULTIPLE_TASK, so the hosted task may
-     * still migrate — [hosted_task_moved] reports that.
+     * still migrate — the returned hosted_task_moved flag reports that.
      */
     private fun launchOnPhone(request: JSONObject): JSONObject {
         val target = ComponentName.unflattenFromString(request.getString("component")) ?: error("INVALID_COMPONENT")

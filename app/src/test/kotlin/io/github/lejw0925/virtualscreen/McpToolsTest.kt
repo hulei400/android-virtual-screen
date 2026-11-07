@@ -326,7 +326,7 @@ class McpToolsTest {
         val sessions=VirtualScreenSessionManager(RuntimeEnvironment.getApplication(),FakeBackend(BackendKind.ROOT),FakeBackend(BackendKind.SHIZUKU))
         var language=UiLanguage.ZH_HANS
         val registry=McpToolRegistry(sessions) { language }
-        val names=registry.tools.map { it.name }; assertEquals(20,names.size)
+        val names=registry.tools.map { it.name }; assertEquals(21,names.size)
         for(l in UiLanguage.entries) {
             language=l
             assertEquals(names,registry.tools.map { it.name })

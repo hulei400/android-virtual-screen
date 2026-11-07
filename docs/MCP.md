@@ -62,6 +62,7 @@ MCP-Protocol-Version: 2025-06-18
 | `close_screen` | 关闭虚拟屏，仅接受租约和 purpose |
 | `list_apps` | 只读查询，可按 `query` 或 `package` 过滤 |
 | `launch_app` | 必填 `component`，可选 `uri`；必要时等待手机重启审批 |
+| `launch_on_phone` | 在手机主屏启动 `component`，强制新建任务，用于和虚拟屏双开同一应用；可选 `uri`；直接打断手机当前界面，只在明确需要时调用 |
 | `observe` | 默认 `mode=tree`、`format=compact`；可显式请求 `screenshot/both` 或 `full` |
 | `tap_at` | 必填 `x/y`；不接受滑动路径、时长或滚动量 |
 | `long_press_at` | 必填 `x/y`，可选 `duration_ms`，200–2000 ms |
@@ -73,7 +74,7 @@ MCP-Protocol-Version: 2025-06-18
 | `press_key` | 显示限定的导航和编辑按键，默认返回键 4 |
 | `wait` | 延迟、帧变化、节点文本、存在 / 不存在、前台应用、稳定状态；最长 30 秒 |
 
-共 20 个工具。原 `control/screen/applications/pointer/service_status` 已拆分，客户端升级后需刷新工具发现。`get_status/get_request_receipt/list_apps/observe/wait` 提供只读提示，启动和输入操作不提供只读提示。`observe` 也返回 `takeover_count`。
+共 21 个工具。原 `control/screen/applications/pointer/service_status` 已拆分，客户端升级后需刷新工具发现。`get_status/get_request_receipt/list_apps/observe/wait` 提供只读提示，启动和输入操作不提供只读提示。`observe` 也返回 `takeover_count`。
 
 以 `tools/list` 返回的 schema 为准。不能把其他 action 的参数混入当前操作，不能调用主屏 Home / Power 等全局按键。
 
