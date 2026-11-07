@@ -247,7 +247,8 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
         val output = command(listOf("/system/bin/am", "start", "--display", displayId.toString(), "-f", "0x18800000", "-n", target.flattenToString()) +
             if (uri.isNotBlank()) listOf("-a", "android.intent.action.VIEW", "-d", uri) else emptyList())
         check("Error:" !in output && "Activity not started" !in output) { "DISPLAY_LAUNCH_REJECTED" }
-        val tasks = runningTasks().filter(::matchesTarget)
+        val allTasks = runningTasks()
+        val tasks = allTasks.filter(::matchesTarget)
         // Some ROMs refuse to host a non-resizeable activity on a secondary display;
         // they put it on the phone screen instead. Keep a distinct error for that case.
         // A multi-window component (e.g. Edge's second-window activity) can
@@ -255,7 +256,15 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
         // display), so only require that at least one of its tasks is on this
         // display. Requiring all of them here rejected successful launches.
         check(tasks.any { taskDisplay(it) == displayId }) {
-            if (!resizeable) "DISPLAY_APP_UNSUPPORTED" else "DISPLAY_LAUNCH_MISMATCH"
+            // Diagnostic: the check still fails on some devices even though the
+            // window is visible on the virtual display, so report exactly what
+            // the backend sees (same task list the check used) instead of guessing.
+            val edgeTasks = allTasks.filter {
+                it.baseActivity?.packageName == target.packageName || it.topActivity?.packageName == target.packageName
+            }.joinToString(";") { t ->
+                "${t.taskId}:${t.baseActivity?.shortClassName}/${t.topActivity?.shortClassName}@${taskDisplay(t)}"
+            }
+            if (!resizeable) "DISPLAY_APP_UNSUPPORTED" else "DISPLAY_LAUNCH_MISMATCH matched=${tasks.size} total=${allTasks.size} edge=[$edgeTasks]"
         }
         hostedTasks.addAll(tasks.map { it.taskId })
         rotation?.apply(info.screenOrientation)
