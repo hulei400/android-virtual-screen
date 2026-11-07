@@ -4,6 +4,7 @@
     <string name="notification_channel">Virtual screen</string>
     <string name="notification_running">Virtual screen service is active</string>
     <string name="notification_takeover">Take over</string>
+    <string name="notification_open_on_phone">Open on phone</string>
     <string name="notification_view_only">View only</string>
     <string name="notification_stop">Stop</string>
     <string name="notification_ready">Ready for your agent</string>

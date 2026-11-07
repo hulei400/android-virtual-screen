@@ -169,6 +169,10 @@ internal object RuntimeNotification {
                     builder.addAction(notificationAction(context, R.drawable.ic_notification_takeover,
                         R.string.notification_takeover, action(2, VirtualScreenForegroundService.ACTION_TAKEOVER)))
                 }
+                // Fluid Cloud button: open the virtual display's current
+                // app on the phone's main display, as a second task.
+                builder.addAction(notificationAction(context, R.drawable.ic_notification_open_on_phone,
+                    R.string.notification_open_on_phone, action(4, VirtualScreenForegroundService.ACTION_OPEN_ON_PHONE)))
                 builder.addAction(notificationAction(context, R.drawable.ic_notification_close,
                     R.string.notification_close_display, action(1, VirtualScreenForegroundService.ACTION_CLOSE_DISPLAY)))
             }

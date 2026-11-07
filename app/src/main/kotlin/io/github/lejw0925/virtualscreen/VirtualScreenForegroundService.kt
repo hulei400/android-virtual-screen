@@ -28,6 +28,7 @@ class VirtualScreenForegroundService : Service() {
         const val ACTION_TAKEOVER = "io.github.lejw0925.virtualscreen.TAKEOVER"
         const val ACTION_VIEW_ONLY = "io.github.lejw0925.virtualscreen.VIEW_ONLY"
         const val ACTION_CLOSE_DISPLAY = "io.github.lejw0925.virtualscreen.CLOSE_DISPLAY"
+        const val ACTION_OPEN_ON_PHONE = "io.github.lejw0925.virtualscreen.OPEN_ON_PHONE"
         internal const val ACTION_ALLOW_ONCE = "io.github.lejw0925.virtualscreen.ALLOW_ONCE"
         internal const val ACTION_ALLOW_ALWAYS = "io.github.lejw0925.virtualscreen.ALLOW_ALWAYS"
         internal const val ACTION_DENY = "io.github.lejw0925.virtualscreen.DENY_CONTROL"
@@ -233,6 +234,18 @@ class VirtualScreenForegroundService : Service() {
                     app.runtimeWork {
                         runCatching { app.sessions.closeFromPhone(session) }
                             .onFailure { app.activityLog.failure("notification_close_display", it) }
+                    }
+                }
+            }
+            ACTION_OPEN_ON_PHONE -> if (isCurrentDisplayAction(intent)) {
+                // Fluid Cloud button: open the virtual display's current
+                // app on the phone's main display, as a second task. This
+                // does not touch the virtual display, so no takeover.
+                val session = intent.getStringExtra(RuntimeNotification.EXTRA_SESSION)!!
+                scope.launch {
+                    app.runtimeWork {
+                        runCatching { app.sessions.phoneOpenCurrent(session) }
+                            .onFailure { app.activityLog.failure("notification_open_on_phone", it) }
                     }
                 }
             }

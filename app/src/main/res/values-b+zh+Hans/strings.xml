@@ -4,6 +4,7 @@
     <string name="notification_channel">虚拟屏</string>
     <string name="notification_running">虚拟屏服务已启用</string>
     <string name="notification_takeover">人工接管</string>
+    <string name="notification_open_on_phone">在主屏打开</string>
     <string name="notification_view_only">只看</string>
     <string name="notification_stop">停止</string>
     <string name="notification_ready">等待 Agent</string>

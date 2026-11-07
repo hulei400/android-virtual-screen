@@ -159,6 +159,9 @@ interface VirtualScreenBackend {
     /** Launch a component on the phone's default display, forcing a new task. No virtual-display side effects. */
     suspend fun launchOnPhone(handle: VirtualScreenHandle, component: String, uri: String? = null): BackendResult =
         BackendResult.failure("PHONE_LAUNCH_UNSUPPORTED")
+    /** Open the virtual display's current app on the phone's default display. The backend resolves the component. */
+    suspend fun phoneOpenCurrent(handle: VirtualScreenHandle): BackendResult =
+        BackendResult.failure("PHONE_OPEN_UNSUPPORTED")
     suspend fun observe(handle: VirtualScreenHandle): Result<ScreenObservation>
     /** Validate display geometry without encoding an image for tree-only observations. */
     suspend fun inspect(handle: VirtualScreenHandle): Result<ScreenObservation> = observe(handle)

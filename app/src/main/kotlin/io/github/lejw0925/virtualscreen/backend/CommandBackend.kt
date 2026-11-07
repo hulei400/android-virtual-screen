@@ -52,6 +52,10 @@ abstract class CommandBackend(protected val context: Context) : VirtualScreenBac
             .put("ownerPackage", context.packageName))
     }
 
+    override suspend fun phoneOpenCurrent(handle: VirtualScreenHandle): BackendResult = response {
+        transact(packet(handle, "phone_open_current"))
+    }
+
     override suspend fun observe(handle: VirtualScreenHandle): Result<ScreenObservation> = result {
         val data = transact(packet(handle, "observe")).checked()
         val bytes = Base64.decode(data.getString("image"), Base64.DEFAULT)

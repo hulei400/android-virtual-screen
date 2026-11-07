@@ -392,6 +392,15 @@ class VirtualScreenSessionManager(
             launchMutex.unlock()
         }
     }
+    /** Phone-side Fluid Cloud action: open the virtual display's current app
+     *  on the phone's main display. No lease required — the user taps the
+     *  button on the phone, not an MCP client. */
+    suspend fun phoneOpenCurrent(sessionId: String): OperationEnvelope = mutex.withLock {
+        if (state.value.sessionId != sessionId || state.value.displayId == null) {
+            return@withLock OperationEnvelope.failure("STALE_VIRTUAL_SCREEN", state.value.sessionId)
+        }
+        backend().phoneOpenCurrent(requireHandle()).toEnvelope(state.value.sessionId)
+    }
     suspend fun observe(owner: String, token: String, captureFrame: Boolean = true): Result<OperationEnvelope> = safeResult {
         mutex.withLock {
             requireLease(owner, token)

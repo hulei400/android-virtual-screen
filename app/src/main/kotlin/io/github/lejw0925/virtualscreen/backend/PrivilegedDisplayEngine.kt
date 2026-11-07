@@ -116,7 +116,7 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
         if (action == "probe") return geometry().put("ok", true).put("interactive", power.isInteractive).put("locked", keyguard.isDeviceLocked)
         touched = SystemClock.elapsedRealtime()
         check(allowOff || power.isInteractive && !keyguard.isDeviceLocked) { "SCREEN_OFF_UNAVAILABLE" }
-        if (action !in setOf("launch", "launch_phone", "preview")) {
+        if (action !in setOf("launch", "launch_phone", "phone_open_current", "preview")) {
             val tasks = runningTasks()
             check(tasks.any { taskDisplay(it) == current.display.displayId } ||
                 tasks.none { it.taskId in hostedTasks && taskDisplay(it) != current.display.displayId }) { "APP_MOVED_TO_PHONE" }
@@ -193,6 +193,7 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
                 context.packageManager.getApplicationInfo(io.github.lejw0925.virtualscreen.BuildConfig.APPLICATION_ID, 0).sourceDir)
             "launch" -> launch(request)
             "launch_phone" -> launchOnPhone(request)
+            "phone_open_current" -> phoneOpenCurrent(request)
             else -> error("UNSUPPORTED_OPERATION")
         }
     }
@@ -292,6 +293,26 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
         require(info.enabled) { "APP_NOT_LAUNCHABLE" }
         val uri = request.optString("uri")
         require(uri.length <= 8192 && '\u0000' !in uri) { "INVALID_URI" }
+        return startOnPhone(target, uri)
+    }
+
+    /** Fluid Cloud button: open whatever app is currently on the virtual
+     *  display on the phone's main display, as a second task. The component
+     *  is resolved here (the phone side has no component to pass in). */
+    private fun phoneOpenCurrent(request: JSONObject): JSONObject {
+        val displayId = display?.display?.displayId ?: error("DISPLAY_GONE")
+        val current = runningTasks().firstOrNull { taskDisplay(it) == displayId && it.taskId in hostedTasks }
+            ?: runningTasks().firstOrNull { taskDisplay(it) == displayId && it.numActivities > 0 }
+            ?: error("NO_RUNNING_APP")
+        val target = current.topActivity ?: current.baseActivity ?: error("NO_RUNNING_APP")
+        require(target.packageName != io.github.lejw0925.virtualscreen.BuildConfig.APPLICATION_ID) { "APP_NOT_LAUNCHABLE" }
+        return startOnPhone(target, "")
+    }
+
+    /** Shared by launchOnPhone and phoneOpenCurrent: start a component on
+     *  the phone's default display with NEW_TASK | MULTIPLE_TASK |
+     *  EXCLUDE_FROM_RECENTS, then verify a task for its package is there. */
+    private fun startOnPhone(target: ComponentName, uri: String): JSONObject {
         val phoneDisplay = android.view.Display.DEFAULT_DISPLAY
         val output = command(listOf("/system/bin/am", "start", "--display", phoneDisplay.toString(), "-f", "0x18800000", "-n", target.flattenToString()) +
             if (uri.isNotBlank()) listOf("-a", "android.intent.action.VIEW", "-d", uri) else emptyList())

@@ -29,7 +29,9 @@ class DeviceToolProbeTest {
         val report = McpToolProbe(app.sessions).run()
 
         assertEquals(report.failedTools.toString(), CapabilityStatus.AVAILABLE, report.capabilities.displayCreation)
-        assertEquals(report.failedTools.toString(), report.totalTools, report.passedTools)
+        // launch_on_phone is deliberately not probed: it pops an app onto
+        // the phone screen. It is the only tool expected to fail here.
+        assertEquals(report.failedTools.toString(), listOf("launch_on_phone"), report.failedTools.map { it.tool })
         assertNull(app.sessions.state.value.displayId)
         assertNull(app.sessions.leaseStatus())
         assertNull(app.sessions.state.value.errorCode)
