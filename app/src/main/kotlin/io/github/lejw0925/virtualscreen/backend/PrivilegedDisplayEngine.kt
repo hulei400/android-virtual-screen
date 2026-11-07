@@ -248,25 +248,28 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
             if (uri.isNotBlank()) listOf("-a", "android.intent.action.VIEW", "-d", uri) else emptyList())
         check("Error:" !in output && "Activity not started" !in output) { "DISPLAY_LAUNCH_REJECTED" }
         val allTasks = runningTasks()
-        val tasks = allTasks.filter(::matchesTarget)
+        // Match the post-launch check by package, not by component: the launched
+        // component may not survive as the task's component. Edge's second-window
+        // activity redirects to the main activity when the browser is already
+        // running, so the task on the virtual display is a ChromeTabbedActivity
+        // task even though ChromeTabbedActivity2 was launched (diagnosed
+        // 2026-11-08, display 71: matched=0, the virtual task was
+        // ChromeTabbedActivity/ChromeTabbedActivity@71). The check only needs to
+        // confirm the launched app landed on this display.
+        val tasks = allTasks.filter {
+            it.baseActivity?.packageName == target.packageName || it.topActivity?.packageName == target.packageName
+        }
         // Some ROMs refuse to host a non-resizeable activity on a secondary display;
         // they put it on the phone screen instead. Keep a distinct error for that case.
-        // A multi-window component (e.g. Edge's second-window activity) can
-        // legitimately own tasks on two displays at once (phone + virtual
-        // display), so only require that at least one of its tasks is on this
-        // display. Requiring all of them here rejected successful launches.
         check(tasks.any { taskDisplay(it) == displayId }) {
-            // Diagnostic: the check still fails on some devices even though the
-            // window is visible on the virtual display, so report exactly what
-            // the backend sees (same task list the check used) instead of guessing.
-            val edgeTasks = allTasks.filter {
-                it.baseActivity?.packageName == target.packageName || it.topActivity?.packageName == target.packageName
-            }.joinToString(";") { t ->
+            // Diagnostic: report exactly what the backend sees (same task list
+            // the check used) instead of guessing.
+            val edgeTasks = tasks.joinToString(";") { t ->
                 "${t.taskId}:${t.baseActivity?.shortClassName}/${t.topActivity?.shortClassName}@${taskDisplay(t)}"
             }
             if (!resizeable) "DISPLAY_APP_UNSUPPORTED" else "DISPLAY_LAUNCH_MISMATCH matched=${tasks.size} total=${allTasks.size} edge=[$edgeTasks]"
         }
-        hostedTasks.addAll(tasks.map { it.taskId })
+        hostedTasks.addAll(tasks.filter { taskDisplay(it) == displayId }.map { it.taskId })
         rotation?.apply(info.screenOrientation)
         return geometry().put("ok", true).put("component", target.flattenToString()).put("restarted", elsewhere).put("resizeable", resizeable)
     }
