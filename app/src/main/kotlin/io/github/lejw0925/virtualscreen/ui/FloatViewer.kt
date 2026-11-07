@@ -12,16 +12,21 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import android.text.InputType
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewOutlineProvider
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.TextView
 import io.github.lejw0925.virtualscreen.VirtualScreenApplication
+import io.github.lejw0925.virtualscreen.backend.BackendOperation
 import io.github.lejw0925.virtualscreen.backend.LiveGeometry
 import io.github.lejw0925.virtualscreen.core.SessionState
 import io.github.lejw0925.virtualscreen.core.failure
@@ -82,6 +87,10 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private var resizeGrip: View? = null
     private var resizeGripLeft: View? = null
     private var closeButton: ImageButton? = null
+    private var imeButton: TextView? = null
+    private var imeSink: EditText? = null
+    private var imeBridgeOn = false
+    private val imeShowRunnables = mutableListOf<Runnable>()
     private var params: WindowManager.LayoutParams? = null
     private var chromeTouch = false
     private var stateJob: Job? = null
@@ -114,14 +123,17 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         p.y = p.y.coerceIn(0, (screenH - tall).coerceAtLeast(0))
         updateLayout()
     }
-    // The root intercepts every touch except ones starting on the close button or the
-    // trigger bar, so window gestures always win and content touches never inject.
+    // The root intercepts every touch except ones starting on a chrome control
+    // (close button, keyboard button) or the trigger bar, so window gestures
+    // always win and content touches never inject.
     private fun isOnChrome(event: MotionEvent): Boolean {
-        val target = if (collapsed) triggerBar else closeButton
-        val view = target?.takeIf { it.visibility == View.VISIBLE } ?: return false
-        val loc = IntArray(2); view.getLocationOnScreen(loc)
-        return event.rawX >= loc[0] && event.rawX < loc[0] + view.width &&
-            event.rawY >= loc[1] && event.rawY < loc[1] + view.height
+        val targets = if (collapsed) listOfNotNull(triggerBar) else listOfNotNull(closeButton, imeButton)
+        return targets.any { view ->
+            if (view.visibility != View.VISIBLE) return@any false
+            val loc = IntArray(2); view.getLocationOnScreen(loc)
+            event.rawX >= loc[0] && event.rawX < loc[0] + view.width &&
+                event.rawY >= loc[1] && event.rawY < loc[1] + view.height
+        }
     }
     private fun onWindowTouch(event: MotionEvent): Boolean {
         when (event.actionMasked) {
@@ -237,16 +249,81 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     }
     fun hide() {
         if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { hide() }; return }
+        closeImeBridge()
         stateJob?.cancel(); stateJob = null
         previewJob?.cancel(); previewJob = null
         root?.removeCallbacks(sinkRunnable)
         runCatching { app.unregisterComponentCallbacks(configCallbacks) }
         liveView?.setResumed(false)
         liveView?.dispose()
-        liveView = null; closeButton = null; resizeGrip = null; resizeGripLeft = null
+        liveView = null; closeButton = null; imeButton = null; imeSink = null; resizeGrip = null; resizeGripLeft = null
         root?.let { runCatching { windowManager.removeView(it) } }
         root = null; content = null; triggerBar = null; params = null
         collapsed = false; collapsedDuringDrag = false
+    }
+
+    // IME bridge (see buildViews): open makes the overlay focusable, focuses
+    // the sink editor and asks the phone IME to show, retrying on Eta's
+    // schedule because the IME is slow to attach to a just-focusable window.
+    private fun openImeBridge() {
+        val sink = imeSink ?: return
+        val p = params ?: return
+        if (collapsed || imeBridgeOn) return
+        imeBridgeOn = true
+        if ((p.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) != 0) {
+            p.flags = p.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+            updateLayout()
+        }
+        sink.isFocusable = true
+        sink.isFocusableInTouchMode = true
+        sink.requestFocus()
+        val imm = app.getSystemService(InputMethodManager::class.java)
+        imeShowRunnables.clear()
+        for (delayMs in longArrayOf(120L, 480L, 900L, 1400L)) {
+            val task = Runnable {
+                if (imeBridgeOn) imm?.showSoftInput(sink, InputMethodManager.SHOW_IMPLICIT)
+            }
+            imeShowRunnables.add(task)
+            mainHandler.postDelayed(task, delayMs)
+        }
+        app.activityLog.runtime("float_viewer", "ime_bridge", "open")
+    }
+
+    private fun closeImeBridge() {
+        if (!imeBridgeOn) return
+        imeBridgeOn = false
+        imeShowRunnables.forEach { mainHandler.removeCallbacks(it) }
+        imeShowRunnables.clear()
+        val sink = imeSink
+        val imm = app.getSystemService(InputMethodManager::class.java)
+        try { imm?.hideSoftInputFromWindow(sink?.windowToken, 0) } catch (_: Exception) {}
+        sink?.clearFocus()
+        sink?.let { it.isFocusable = false; it.isFocusableInTouchMode = false }
+        val p = params ?: return
+        if ((p.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) == 0) {
+            p.flags = p.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            updateLayout()
+        }
+        app.activityLog.runtime("float_viewer", "ime_bridge", "close")
+    }
+
+    // Commit the sink's text to the virtual display's focused field, then
+    // close the bridge. Phone-side input (same path as the fullscreen
+    // viewer's localInput): a takeover so the agent sees the counter move,
+    // then the normal text path (accessibility set-text first, clipboard
+    // paste fallback). replace=true: the sink starts empty, so its content
+    // is the whole text the user meant, including any preselected word.
+    private fun commitImeBridge() {
+        val text = imeSink?.text?.toString().orEmpty()
+        closeImeBridge()
+        if (text.isEmpty()) return
+        imeSink?.setText("")
+        scope.launch {
+            runCatching {
+                app.sessions.phoneTakeover()
+                phoneInput(app, BackendOperation.Text(text, replace = true))
+            }.onFailure { app.activityLog.runtime("float_viewer", "ime_bridge", "commit_failed") }
+        }
     }
     /** A 36dp corner grip: three diagonal lines. `mirror` flips it for the
      *  bottom-left corner. Purely visual — the resize zone is detected from
@@ -321,6 +398,42 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         }
         contentView.addView(close)
         closeButton = close
+        // IME bridge, part 2 (Eta's VirtualScreenFloatWindow.openImeBridge,
+        // adapted): a 1x1 invisible editor that hosts the phone keyboard so
+        // the user can type into the virtual display without going fullscreen.
+        // The window is normally NOT_FOCUSABLE, so no keyboard can attach to
+        // it; opening the bridge makes it focusable, focuses this sink and
+        // asks the IME to show. Typed text is committed to the virtual
+        // display's focused field on Done (or on the keyboard button).
+        val sink = EditText(app).apply {
+            layoutParams = FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START)
+            setBackground(null)
+            setTextColor(0x00000000)
+            setCursorVisible(false)
+            inputType = InputType.TYPE_CLASS_TEXT
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            isSingleLine = true
+            isFocusable = false
+            isFocusableInTouchMode = false
+            setOnEditorActionListener { _, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_DONE) { commitImeBridge(); true } else false
+            }
+            onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
+                if (!hasFocus && imeBridgeOn) closeImeBridge()
+            }
+        }
+        rootView.addView(sink)
+        imeSink = sink
+        val keyboard = TextView(app).apply {
+            text = "⌨"; textSize = 20f; gravity = Gravity.CENTER; setTextColor(0xFFFFFFFF.toInt())
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x80000000.toInt()) }
+            layoutParams = FrameLayout.LayoutParams((32f * d).roundToInt(), (32f * d).roundToInt(), Gravity.TOP or Gravity.START).apply {
+                setMargins((6f * d).roundToInt(), (6f * d).roundToInt(), 0, 0)
+            }
+            setOnClickListener { if (imeBridgeOn) commitImeBridge() else openImeBridge() }
+        }
+        contentView.addView(keyboard)
+        imeButton = keyboard
         val trigger = TextView(app).apply {
             text = "›"; textSize = 26f; gravity = Gravity.CENTER; setTextColor(0xFFFFFFFF.toInt())
             background = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; setColor(0xCC1F1F1F.toInt()); cornerRadius = 14f * d }
@@ -377,6 +490,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private fun collapse(side: Int) {
         val p = params ?: return
         collapsed = true; collapsedSide = side
+        closeImeBridge()
         savedX = p.x; savedY = p.y; savedW = p.width; savedH = p.height
         content?.visibility = View.GONE
         resizeGrip?.visibility = View.GONE

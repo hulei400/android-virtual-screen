@@ -79,6 +79,13 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
             val current = display!!
             check(current.display.displayId > 0) { "INVALID_DISPLAY" }
             id = UUID.randomUUID().toString()
+            // IME bridge, part 1 (Eta-style): let the system keyboard work on
+            // this display. Best-effort only — a failure must not fail display
+            // creation; the float-window bridge still works without it.
+            val imePolicy = runCatching {
+                DisplayImePolicy.apply(current.display.displayId,
+                    context.packageManager.getApplicationInfo(io.github.lejw0925.virtualscreen.BuildConfig.APPLICATION_ID, 0).sourceDir)
+            }.getOrDefault(false)
             reader?.let { capture = VirtualScreenFrameCapture(it, handler) { display?.display } }
             input = RootInputInjector(current.display.displayId)
             mirror = DisplayMirror(current.display,input!!,{ display != null && (allowOff || power.isInteractive && !keyguard.isDeviceLocked) },{ touched=SystemClock.elapsedRealtime() })
@@ -94,6 +101,7 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
             idleMinutes = config.idleTimeoutMinutes
             touched = SystemClock.elapsedRealtime()
             return geometry().put("ok", true).put("handleId", id)
+                .put("ime_policy", imePolicy)
                 .put("independentFocus", Build.VERSION.SDK_INT >= 34).put("screenOff", config.allowScreenOff)
         } catch (failure: Throwable) { release(); throw failure }
     }
