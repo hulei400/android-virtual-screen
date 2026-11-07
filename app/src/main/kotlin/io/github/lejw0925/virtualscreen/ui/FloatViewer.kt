@@ -172,7 +172,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                 val snapped = collapsedDuringDrag; collapsedDuringDrag = false
                 if (resizing) {
                     resizing = false
-                    savePosition()
+                    saveSize()
                 } else if (!moved) {
                     if (isDoubleTap(event)) goFullscreen()
                     else { lastTapTime = SystemClock.uptimeMillis(); lastTapX = event.x; lastTapY = event.y }
@@ -185,7 +185,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                     val p = params ?: return true
                     if (p.x <= edgePx) collapse(SIDE_LEFT)
                     else if (p.x + p.width >= screenW - edgePx) collapse(SIDE_RIGHT)
-                    else savePosition()
+                    else saveSize()
                 }
             }
             MotionEvent.ACTION_CANCEL -> { collapsedDuringDrag = false; resizing = false }
@@ -246,7 +246,6 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     }
     fun hide() {
         if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { hide() }; return }
-        if (root != null) savePosition()
         setControlMode(false)
         stateJob?.cancel(); stateJob = null
         previewJob?.cancel(); previewJob = null
@@ -436,7 +435,6 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         collapsed = true; collapsedSide = side
         setControlMode(false)
         savedX = p.x; savedY = p.y; savedW = p.width; savedH = p.height
-        savePosition()
         content?.visibility = View.GONE
         resizeGrip?.visibility = View.GONE
         resizeGripLeft?.visibility = View.GONE
@@ -523,21 +521,24 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         return rw to rh
     }
     private fun restoredPosition(w: Int, h: Int): Pair<Int, Int> {
-        val x = prefs.getInt("pos_x", -1); val y = prefs.getInt("pos_y", -1)
-        if (x < 0 || y < 0) return (screenW - w - (16f * density).roundToInt()).coerceAtLeast(0) to (screenH / 4).coerceAtLeast(0)
-        return x.coerceIn(0, (screenW - w).coerceAtLeast(0)) to y.coerceIn(0, (screenH - h).coerceAtLeast(0))
+        // No position memory: always dock to the top-right corner, just below
+        // the status bar, so the window never pops up in the middle of the
+        // screen.
+        val x = (screenW - w - (16f * density).roundToInt()).coerceAtLeast(0)
+        val y = (statusBarHeightPx() + (8f * density).roundToInt()).coerceAtLeast(0)
+        return x to y
     }
-    private fun savePosition() {
-        if (collapsed) {
-            // Collapsed into the edge bar: persist the pre-collapse geometry,
-            // not the bar's own position — the bar is not a place to restore to.
-            if (savedW > 0 && savedH > 0) {
-                prefs.edit().putInt("pos_x", savedX).putInt("pos_y", savedY).putInt("width", savedW).putInt("height", savedH).apply()
-            }
-            return
-        }
+    private fun statusBarHeightPx(): Int {
+        val id = app.resources.getIdentifier("status_bar_height", "dimen", "android")
+        return if (id > 0) app.resources.getDimensionPixelSize(id) else (24f * density).roundToInt()
+    }
+    /** Only the size is remembered; the position is not. The window always
+     *  pops up docked to the top-right corner (see [restoredPosition]), so it
+     *  never blocks the middle of the screen. */
+    private fun saveSize() {
         val p = params ?: return
-        prefs.edit().putInt("pos_x", p.x).putInt("pos_y", p.y).putInt("width", p.width).putInt("height", p.height).apply()
+        if (collapsed) return
+        prefs.edit().putInt("width", p.width).putInt("height", p.height).apply()
     }
     private fun updateLayout() {
         val view = root ?: return; val p = params ?: return
