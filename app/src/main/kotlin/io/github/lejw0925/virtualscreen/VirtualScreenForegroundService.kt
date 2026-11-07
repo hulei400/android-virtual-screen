@@ -17,6 +17,7 @@ import io.github.lejw0925.virtualscreen.core.PreviewStatus
 import io.github.lejw0925.virtualscreen.core.VirtualScreenSessionManager
 import io.github.lejw0925.virtualscreen.core.failure
 import io.github.lejw0925.virtualscreen.core.runtime
+import io.github.lejw0925.virtualscreen.ui.FloatViewer
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.util.concurrent.atomic.AtomicInteger
@@ -110,8 +111,15 @@ class VirtualScreenForegroundService : Service() {
                 }
             }.distinctUntilChanged().collect { control ->
                 if(control != null && app.sessions.state.value.previewStatus != PreviewStatus.VISIBLE) {
-                    // Fixed viewer starts directly into PiP without a full-screen task switch.
-                    runCatching { app.sessions.showRemotePreview() }
+                    // Float window is the default view on connect: when it can
+                    // show, do not launch the fullscreen viewer at all. The
+                    // viewer flashing in and out before the float window pops
+                    // is the jank, and the viewer stealing the live mirror is
+                    // what leaves the float window black. Without overlay
+                    // permission, fall back to the remote preview as before.
+                    if (!FloatViewer.canDrawOverlays(this@VirtualScreenForegroundService)) {
+                        runCatching { app.sessions.showRemotePreview() }
+                    }
                 }
             }
         }
