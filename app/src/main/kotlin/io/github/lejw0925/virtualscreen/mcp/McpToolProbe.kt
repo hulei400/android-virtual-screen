@@ -178,8 +178,12 @@ class McpToolProbe(private val sessions: VirtualScreenSessionManager) {
                                     val (x, y) = center(observed, BackendProbeActivity.SCROLL, 950)
                                     args.put("x", x).put("y", y).put("delta", -1)
                                 }
+                                val drag = input("long_press_drag") { args, observed ->
+                                    val (x, y) = center(observed, BackendProbeActivity.SCROLL, 950)
+                                    args.put("start_x", x).put("start_y", y).put("end_x", x).put("end_y", y - 100)
+                                }
                                 val key = input("press_key") { args, _ -> args.put("key_code", 21) }
-                                evidence = evidence.copy(input = listOf(tap, longPress, typed, swipe, scroll, key).all { it.optBoolean("ok") } && tapped && held && textVerified)
+                                evidence = evidence.copy(input = listOf(tap, longPress, typed, swipe, scroll, drag, key).all { it.optBoolean("ok") } && tapped && held && textVerified)
                             } else {
                                 blocked = launched.optString("code", "PROBE_ACTIVITY_LAUNCH_FAILED")
                             }

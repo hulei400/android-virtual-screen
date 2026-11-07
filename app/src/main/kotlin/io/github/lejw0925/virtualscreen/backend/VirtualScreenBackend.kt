@@ -120,6 +120,8 @@ data class NodeInfo(
 sealed interface BackendOperation {
     data class Tap(val x: Int, val y: Int) : BackendOperation
     data class LongPress(val x: Int, val y: Int, val durationMs: Int = 600) : BackendOperation
+    /** Press-hold at the start point, then drag to the end point and release — one down/move/up stream (sliders). */
+    data class LongPressDrag(val startX: Int, val startY: Int, val endX: Int, val endY: Int, val holdMs: Int = 500, val moveMs: Int = 300) : BackendOperation
     data class Swipe(val points: List<Pair<Int, Int>>, val durationMs: Int = 300) : BackendOperation
     data class Scroll(val x: Int, val y: Int, val delta: Int) : BackendOperation
     data class Text(val value: String, val replace: Boolean = false) : BackendOperation

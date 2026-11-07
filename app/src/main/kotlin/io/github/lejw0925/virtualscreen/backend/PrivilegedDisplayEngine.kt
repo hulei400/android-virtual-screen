@@ -158,6 +158,13 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
                 val duration = request.optInt("durationMs", 600).also { require(it in 200..2000) { "INVALID_DURATION" } }
                 injector.execute("swipe", x, y, x, y, duration.toString())
             }
+            "long_press_drag" -> {
+                val start = SwipePath.Point(coordinate("start_x", width), coordinate("start_y", height))
+                val end = SwipePath.Point(coordinate("end_x", width), coordinate("end_y", height))
+                val hold = request.optInt("hold_ms", 500).also { require(it in 100..2000) { "INVALID_DURATION" } }
+                val move = request.optInt("move_ms", 300).also { require(it in 100..2000) { "INVALID_DURATION" } }
+                injector.executeLongPressDrag(start, end, hold, move)
+            }
             "swipe" -> {
                 val values = request.getJSONArray("points")
                 val points = List(values.length()) { n -> val p = values.getJSONArray(n); require(p.length() == 2); SwipePath.Point(p.getInt(0), p.getInt(1)) }

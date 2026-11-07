@@ -55,7 +55,7 @@ MCP-Protocol-Version: 2025-06-18
 | `acquire_control` | 申请五分钟独占控制权，不传 Token |
 | `release_control` | 使用必填 `lease_token` 释放当前控制权 |
 | `request_control` | `request` 申请占用接管；`status` 查询审批；`cancel` 取消 |
-| `get_status` | 查看后端、能力、虚拟屏及控制方；无需租约 |
+| `get_status` | 查看后端、能力、虚拟屏及控制方；无需租约；返回 `takeover_count`（手机接管次数，接管后应重新观察） |
 | `get_request_receipt` | 必填 `request_id` 查询当前会话的请求回执；无需租约 |
 | `create_screen` | 创建虚拟屏，可指定宽、高、DPI、旋转、熄屏和空闲参数 |
 | `configure_screen` | 重建已有虚拟屏，使旧观察失效；未指定参数保留 |
@@ -65,6 +65,7 @@ MCP-Protocol-Version: 2025-06-18
 | `observe` | 默认 `mode=tree`、`format=compact`；可显式请求 `screenshot/both` 或 `full` |
 | `tap_at` | 必填 `x/y`；不接受滑动路径、时长或滚动量 |
 | `long_press_at` | 必填 `x/y`，可选 `duration_ms`，200–2000 ms |
+| `long_press_drag` | 必填 `start_x/start_y/end_x/end_y`，可选 `hold_ms`（100–2000，默认 500）、`move_ms`（100–2000，默认 300）；按住、拖动、松开一次完成，适合滑块 |
 | `swipe_path` | 必填 `points`（2–64 个 `[x,y]`），可选 `duration_ms` |
 | `scroll_at` | 必填 `x/y/delta`；delta 为 -20 到 20 的非零整数 |
 | `input_text` | Unicode 输入，`replace` 替换当前编辑框内容 |
@@ -72,7 +73,7 @@ MCP-Protocol-Version: 2025-06-18
 | `press_key` | 显示限定的导航和编辑按键，默认返回键 4 |
 | `wait` | 延迟、帧变化、节点文本、存在 / 不存在、前台应用、稳定状态；最长 30 秒 |
 
-共 19 个工具。原 `control/screen/applications/pointer/service_status` 已拆分，客户端升级后需刷新工具发现。`get_status/get_request_receipt/list_apps/observe/wait` 提供只读提示，启动和输入操作不提供只读提示。
+共 20 个工具。原 `control/screen/applications/pointer/service_status` 已拆分，客户端升级后需刷新工具发现。`get_status/get_request_receipt/list_apps/observe/wait` 提供只读提示，启动和输入操作不提供只读提示。`observe` 也返回 `takeover_count`。
 
 以 `tools/list` 返回的 schema 为准。不能把其他 action 的参数混入当前操作，不能调用主屏 Home / Power 等全局按键。
 

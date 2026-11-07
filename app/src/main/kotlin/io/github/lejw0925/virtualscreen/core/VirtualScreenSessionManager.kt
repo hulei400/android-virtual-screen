@@ -33,6 +33,8 @@ data class SessionState(
     val displayId: Int? = null,
     val config: VirtualScreenConfig = VirtualScreenConfig(),
     val lease: Lease? = null,
+    /** Monotonic count of phone takeovers; agents compare it with the last observe to spot screen changes. */
+    val takeoverCount: Long = 0,
     val observationId: String? = null,
     val observationGeneration: Long = 0,
     val frame: Bitmap? = null,
@@ -248,7 +250,7 @@ class VirtualScreenSessionManager(
     @Synchronized fun phoneTakeover(): Lease {
         phoneGestures.clear()
         val lease = leases.takeover(PHONE_CLIENT)
-        fence(); update { it.copy(lease = lease) }
+        fence(); update { it.copy(lease = lease, takeoverCount = it.takeoverCount + 1) }
         return lease
     }
     /** Approval is valid only for the controller shown in that notification. */
@@ -388,7 +390,7 @@ class VirtualScreenSessionManager(
             update { it.copy(observationId = fenced.id, frame = fenced.frame ?: it.frame, frameRotation=fenced.rotation, errorCode = null,
                 capabilities = it.capabilities.copy(frameCapture = if(captureFrame) CapabilityStatus.AVAILABLE else it.capabilities.frameCapture,
                     screenOff = if(observed.deviceInteractive == false) CapabilityStatus.AVAILABLE else it.capabilities.screenOff)) }
-            OperationEnvelope(true, sessionId = fenced.sessionId, values = mapOf("observation_id" to fenced.id, "generation" to expected,
+            OperationEnvelope(true, sessionId = fenced.sessionId, values = mapOf("observation_id" to fenced.id, "generation" to expected, "takeover_count" to state.value.takeoverCount,
                 "width" to fenced.width, "height" to fenced.height, "rotation" to fenced.rotation, "frame" to fenced.frame, "mime_type" to fenced.mimeType,
                 "fingerprint" to fenced.frameFingerprint))
         }

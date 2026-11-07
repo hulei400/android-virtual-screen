@@ -59,6 +59,7 @@ class McpToolRegistry(private val sessions: VirtualScreenSessionManager,
                 lease+mapOf("include_nodes" to boolean().put("description",t("旧参数：true 等同 both，false 等同 screenshot。省略 mode 时优先采用此参数。","Legacy parameter: true maps to both and false maps to screenshot when mode is omitted.","舊參數：true 等同 both，false 等同 screenshot；省略 mode 時優先採用此參數。")),"mode" to choice("tree","screenshot","both").put("default","tree"),"format" to choice("compact","full").put("default","compact"),"max_image_width" to integer(320,2048)),lease.keys,readOnly=true),
             tool(l,"tap_at",t("使用最新未消耗观察，在虚拟屏像素坐标 x/y 点击。","Tap display pixel coordinates x/y using a fresh unconsumed observation.","使用最新未消耗觀察，在虛擬螢幕像素座標 x/y 點按。"),observed+after+xy,observed.keys+xy.keys),
             tool(l,"long_press_at",t("在虚拟屏 x/y 长按，duration_ms 为200–2000，默认600。消耗当前观察。","Long press display coordinates x/y for 200–2000 ms (default 600). Consumes the observation.","在虛擬螢幕 x/y 長按，duration_ms 為200–2000，預設600。消耗目前觀察。"),observed+after+xy+("duration_ms" to integer(200,2000)),observed.keys+xy.keys),
+            tool(l,"long_press_drag",t("在虚拟屏起点按住不放，hold_ms 后一次拖到终点松开，整段手势一次发出，适合滑块。hold_ms 默认500，move_ms 默认300。消耗当前观察。","Press and hold the start point, then drag to the end point and release as one gesture — use it for sliders. hold_ms defaults to 500, move_ms to 300. Consumes the observation.","在虛擬螢幕起點按住不放，hold_ms 後一次拖到終點鬆開，整段手勢一次發出，適合滑桿。hold_ms 預設500，move_ms 預設300。消耗目前觀察。"),observed+after+mapOf("start_x" to integer(0,4095),"start_y" to integer(0,4095),"end_x" to integer(0,4095),"end_y" to integer(0,4095),"hold_ms" to integer(100,2000),"move_ms" to integer(100,2000)),observed.keys+setOf("start_x","start_y","end_x","end_y")),
             tool(l,"swipe_path",t("沿2–64个 [x,y] 虚拟屏像素坐标滑动，duration_ms 默认300。消耗当前观察。","Swipe along 2–64 display-pixel [x,y] points. duration_ms defaults to 300. Consumes the observation.","沿2–64個 [x,y] 虛擬螢幕像素座標滑動，duration_ms 預設300。消耗目前觀察。"),observed+after+mapOf("duration_ms" to integer(100,2000),
                 "points" to JSONObject().put("type","array").put("minItems",2).put("maxItems",64).put("items",JSONObject().put("type","array").put("minItems",2).put("maxItems",2).put("items",integer(0,4095)))),observed.keys+"points"),
             tool(l,"scroll_at",t("在虚拟屏 x/y 滚动。delta 为-20至20的非零整数，正数向下。消耗当前观察。","Scroll at display coordinates x/y. delta is a nonzero integer from -20 to 20; positive scrolls down. Consumes the observation.","在虛擬螢幕 x/y 捲動。delta 為-20至20的非零整數，正數向下。消耗目前觀察。"),observed+after+xy+("delta" to integer(-20,20).put("not",JSONObject().put("const",0))),observed.keys+xy.keys+"delta"),
@@ -133,7 +134,7 @@ class McpToolRegistry(private val sessions: VirtualScreenSessionManager,
                 "get_status" -> {
                     val controller=sessions.leaseStatus(); val state=sessions.state.value; val c=state.capabilities
                     OperationEnvelope(true,sessionId=state.sessionId,values=mapOf("backend" to state.backend.wireName,"status" to state.status.name.lowercase(),"display_id" to state.displayId,
-                        "controller" to controller?.owner,"preview_status" to state.previewStatus.name.lowercase(),"lease_remaining_ms" to controller?.let { (it.expiresAtMillis-System.nanoTime()/1000000).coerceAtLeast(0) },
+                        "controller" to controller?.owner,"takeover_count" to state.takeoverCount,"preview_status" to state.previewStatus.name.lowercase(),"lease_remaining_ms" to controller?.let { (it.expiresAtMillis-System.nanoTime()/1000000).coerceAtLeast(0) },
                         "capabilities" to mapOf("display" to c.displayCreation.name,"capture" to c.frameCapture.name,"input" to c.inputInjection.name,"nodes" to c.accessibilityNodes.name,"screen_off" to c.screenOff.name),"error_code" to state.errorCode))
                 }
                 "get_request_receipt" -> {
@@ -293,6 +294,7 @@ class McpToolRegistry(private val sessions: VirtualScreenSessionManager,
     private fun operation(name: String,a: JSONObject): BackendOperation = when(name) {
         "tap_at" -> BackendOperation.Tap(a.getInt("x"),a.getInt("y"))
         "long_press_at" -> BackendOperation.LongPress(a.getInt("x"),a.getInt("y"),a.optInt("duration_ms",600))
+        "long_press_drag" -> BackendOperation.LongPressDrag(a.getInt("start_x"),a.getInt("start_y"),a.getInt("end_x"),a.getInt("end_y"),a.optInt("hold_ms",500),a.optInt("move_ms",300))
         "swipe_path" -> a.getJSONArray("points").let { p -> BackendOperation.Swipe(List(p.length()) { i -> p.getJSONArray(i).let { it.getInt(0) to it.getInt(1) } },a.optInt("duration_ms",300)) }
         "scroll_at" -> BackendOperation.Scroll(a.getInt("x"),a.getInt("y"),a.getInt("delta"))
         "input_text" -> BackendOperation.Text(a.getString("text"),a.optBoolean("replace"))

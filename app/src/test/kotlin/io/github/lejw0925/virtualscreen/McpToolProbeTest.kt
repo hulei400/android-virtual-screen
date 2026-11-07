@@ -27,7 +27,7 @@ class McpToolProbeTest {
     fun probeWaitsForDisplayBoundsAndEditorFocusAndVerifiesTheExactCounter() = runBlocking {
         val report = probeWithAsyncControls(counterTapWorks = true)
 
-        assertEquals(report.failedTools.toString(), 19, report.passedTools)
+        assertEquals(report.failedTools.toString(), 20, report.passedTools)
     }
 
     @Test
@@ -130,7 +130,7 @@ class McpToolProbeTest {
 
         assertEquals(7, manager.state.value.displayId)
         assertEquals(0, backend.closed)
-        assertEquals(19, report.totalTools)
+        assertEquals(20, report.totalTools)
         assertTrue(report.failedTools.any { it.code == "DISPLAY_ALREADY_ACTIVE" })
         assertNull(manager.leaseStatus())
     }
@@ -145,7 +145,7 @@ class McpToolProbeTest {
 
         val report = McpToolProbe(manager).run()
 
-        assertEquals(19, report.totalTools)
+        assertEquals(20, report.totalTools)
         assertTrue(report.results.any { it.tool == "create_screen" && it.code == "DISPLAY_CREATE_FAILED" })
         assertEquals(CapabilityStatus.UNAVAILABLE, report.capabilities.displayCreation)
         assertEquals(CapabilityStatus.UNKNOWN, report.capabilities.inputInjection)

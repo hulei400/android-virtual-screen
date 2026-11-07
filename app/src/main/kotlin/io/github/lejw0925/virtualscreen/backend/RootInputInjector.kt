@@ -83,6 +83,13 @@ internal class RootInputInjector(
         return executeInput { touch(snapshot, durationMs) }
     }
 
+    /** One down/move/up stream: hold at the start point, then drag to the end point (sliders). */
+    fun executeLongPressDrag(start: SwipePath.Point, end: SwipePath.Point, holdMs: Int, moveMs: Int): JSONObject {
+        require(start.x >= 0 && start.y >= 0 && end.x >= 0 && end.y >= 0) { "INVALID_PATH" }
+        require(holdMs in 100..2_000 && moveMs in 100..2_000) { "INVALID_DURATION" }
+        return executeInput { longPressDrag(start, end, holdMs, moveMs) }
+    }
+
     private fun executeInput(action: () -> Boolean): JSONObject {
         val started = SystemClock.elapsedRealtime()
         val epoch = generation.get()
@@ -128,6 +135,40 @@ internal class RootInputInjector(
             return down && up
         } finally {
             if (!released) runCatching { inject(KeyEvent(now, uptimeMillis(), KeyEvent.ACTION_UP, code, 0), wait = false) }
+        }
+    }
+
+    private fun longPressDrag(start: SwipePath.Point, end: SwipePath.Point, holdMs: Int, moveMs: Int): Boolean {
+        val downTime = uptimeMillis()
+        var x = start.x.toFloat(); var y = start.y.toFloat()
+        var released = false
+        try {
+            var finished = motion(downTime, MotionEvent.ACTION_DOWN, x, y)
+            if (!finished || Thread.currentThread().isInterrupted) return false
+            // Hold the pointer down; stationary moves keep the gesture one stream.
+            val holdEnd = downTime + holdMs
+            while (uptimeMillis() < holdEnd) {
+                if (Thread.currentThread().isInterrupted) return false
+                if (!motion(downTime, MotionEvent.ACTION_MOVE, x, y)) return false
+                pause(16)
+            }
+            val moveStart = uptimeMillis(); val moveEnd = moveStart + moveMs
+            while (uptimeMillis() < moveEnd) {
+                if (Thread.currentThread().isInterrupted) return false
+                val fraction = ((uptimeMillis() - moveStart).toDouble() / moveMs).coerceIn(0.0, 1.0)
+                x = (start.x + (end.x - start.x) * fraction).toFloat()
+                y = (start.y + (end.y - start.y) * fraction).toFloat()
+                if (!motion(downTime, MotionEvent.ACTION_MOVE, x, y)) return false
+                pause(8)
+            }
+            if (Thread.currentThread().isInterrupted) return false
+            x = end.x.toFloat(); y = end.y.toFloat()
+            if (!motion(downTime, MotionEvent.ACTION_MOVE, x, y)) return false
+            finished = motion(downTime, MotionEvent.ACTION_UP, x, y) && finished
+            released = true
+            return finished
+        } finally {
+            if (!released) runCatching { motion(downTime, MotionEvent.ACTION_CANCEL, x, y, wait = false) }
         }
     }
 
