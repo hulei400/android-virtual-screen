@@ -117,6 +117,13 @@ class VirtualScreenApplication : Application() {
     /** The activity currently in front, if any — used to send the fullscreen
      *  viewer to the background when the float window auto-shows on connect. */
     @Volatile private var resumedActivity: Activity? = null
+    /** When the current display appeared (epoch ms). MainActivity uses it to
+     *  tell an auto-launched viewer (display just created) apart from the
+     *  user deliberately opening the app: only the latter hides the float
+     *  window. Without this, the auto-launched viewer's onResume hides the
+     *  float window the auto-show just popped, every single time. */
+    @Volatile var displayAppearedAt: Long = 0L
+        private set
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate() {
@@ -157,6 +164,7 @@ class VirtualScreenApplication : Application() {
                 val id = s.displayId
                 if (id != null && id != lastDisplayId) {
                     // New display: the float window is the default view.
+                    displayAppearedAt = System.currentTimeMillis()
                     // A single show() can be lost (a racing hide from the
                     // viewer resuming, a main-thread timing slip), so retry
                     // for a few seconds. The retry stops as soon as the

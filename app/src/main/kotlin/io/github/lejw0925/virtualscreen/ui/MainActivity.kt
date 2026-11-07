@@ -170,8 +170,12 @@ open class MainActivity : ComponentActivity() {
             // 打开查看时默认只看：手机没在接管、不是刚从设置页回来，才自动打开。
             if(!openingSettings && app.sessions.state.value.lease?.owner != VirtualScreenSessionManager.PHONE_CLIENT) app.settings.update { it.copy(viewOnly=true) }
             // 回到全屏查看时收起悬浮窗： live 镜像一次只给一个查看器，全屏接手后悬浮窗会黑屏。
-            // 这是用户主动进全屏：同时抑制自动弹，免得自动弹的重试又把它顶回来。
-            if(!openingSettings) { app.floatViewer.hide(); app.floatViewer.suppressAutoShow() }
+            // 但刚建屏时自动弹出的查看器不算用户主动进全屏：屏刚出现（5 秒内）时不收悬浮窗、
+            // 不抑制自动弹——不然查看器的 onResume 会把自动弹刚弹出的悬浮窗立刻收回去，
+            // 自动弹也就永远弹不出来（#8/#9/#10/#11 都是这么失败的）。5 秒后用户再打开 app，
+            // 就是主动要看全屏，照旧收起悬浮窗。
+            val justAppeared = System.currentTimeMillis() - app.displayAppearedAt < 5000
+            if(!openingSettings && !justAppeared) { app.floatViewer.hide(); app.floatViewer.suppressAutoShow() }
             openingSettings = false
             if(this !is ViewerActivity) ViewerActivity.dismissPreview()
             beginPhoneSession()
