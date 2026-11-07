@@ -544,7 +544,17 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                     ?.snapshot(displayId, UUID.randomUUID().toString())
                     ?.nodes?.firstOrNull { it.editable && it.focused }
             }.getOrNull()
-            if (target != null) openImeBridge(target.text ?: "") else closeImeBridge()
+            if (target != null) {
+                // Coolapk puts the hot search word in the field's *text* as
+                // a grey placeholder, with the same word as the hint (seen
+                // live: text "选机中心k" after typing "k", hint "选机中心").
+                // If the text is exactly the hint it is not real input:
+                // pre-fill with "" so the first keystroke replaces it
+                // instead of appending after it.
+                val rawText = target.text ?: ""
+                val initialText = if (rawText.isNotEmpty() && rawText == target.hintText) "" else rawText
+                openImeBridge(initialText)
+            } else closeImeBridge()
         }
     }
     private fun openImeBridge(initialText: String) {
