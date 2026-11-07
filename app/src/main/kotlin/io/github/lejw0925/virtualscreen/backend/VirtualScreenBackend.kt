@@ -49,6 +49,8 @@ data class VirtualScreenHandle(
     val id: String,
     val displayId: Int,
     val config: VirtualScreenConfig,
+    /** True when the display IME policy was set to LOCAL (keyboard can show on this display). */
+    val imePolicy: Boolean = false,
 )
 
 data class ScreenObservation(

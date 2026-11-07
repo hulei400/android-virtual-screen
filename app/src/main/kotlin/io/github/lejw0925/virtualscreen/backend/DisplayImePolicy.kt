@@ -2,6 +2,7 @@ package io.github.lejw0925.virtualscreen.backend
 
 import android.os.IBinder
 import android.os.Process
+import android.util.Log
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
@@ -13,44 +14,62 @@ import java.util.concurrent.TimeUnit
  * Android only shows a soft keyboard on a display whose IME policy allows
  * it, and the default for a freshly created virtual display is not reliable
  * across ROMs. So set it explicitly to LOCAL (1) once, right after the
- * display is created. `setDisplayImePolicy` is a hidden IWindowManager API
- * restricted to system/shell callers, so it runs in a tiny helper process as
- * the shell user (uid 2000) via app_process — the same route ShellTextInput
- * already uses for clipboard paste.
+ * display is created.
+ *
+ * Runs in a tiny helper process via app_process — the same route
+ * ShellTextInput already uses — because `setDisplayImePolicy` is a hidden
+ * IWindowManager API restricted to privileged callers. The helper runs as
+ * root (uid 0), not shell (uid 2000): root is the proven su path on this
+ * phone (the whole Root backend runs on it), while `su 2000` is unproven
+ * here — the first build (#14) used shell and the keyboard still did not
+ * appear after a takeover, so the policy call most likely never ran.
  */
 internal object DisplayImePolicy {
+    private const val TAG = "DisplayImePolicy"
     private const val MARKER = "IME_POLICY:"
     private const val POLICY_LOCAL = 1
 
-    /** Best-effort: returns false instead of throwing when the policy cannot be set. */
+    /** Best-effort: retries once (the display may not be ready yet), returns false instead of throwing. */
     fun apply(displayId: Int, sourceApk: String): Boolean {
         require(displayId > 0) { "INVALID_DISPLAY" }
-        return runCatching {
-            val quotedApk = "'" + sourceApk.replace("'", "'\\''") + "'"
-            val mode = detectSuCommandMode(uid = "2000", timeoutMillis = 5000)
-            val process = ProcessBuilder(*mode.arguments(
-                "CLASSPATH=$quotedApk app_process /system/bin ${DisplayImePolicy::class.java.name}", uid = "2000"))
-                .redirectErrorStream(true).start()
-            try {
-                process.outputStream.bufferedWriter().use { input ->
-                    input.write(JSONObject().put("displayId", displayId).put("policy", POLICY_LOCAL).toString())
-                }
-                var result: JSONObject? = null
-                process.inputStream.bufferedReader().useLines { lines ->
-                    lines.forEach { line -> if (line.startsWith(MARKER)) result = JSONObject(line.removePrefix(MARKER)) }
-                }
-                check(process.waitFor(5, TimeUnit.SECONDS) && process.exitValue() == 0) { "IME_POLICY_UNAVAILABLE" }
-                result?.optBoolean("ok") == true
-            } finally {
-                process.destroy()
+        repeat(2) { attempt ->
+            runCatching { applyOnce(displayId, sourceApk) }.onSuccess { ok ->
+                if (ok) return true
+            }.onFailure { error ->
+                Log.w(TAG, "apply failed (attempt ${attempt + 1}): ${error.message}")
             }
-        }.getOrDefault(false)
+            if (attempt == 0) Thread.sleep(300)
+        }
+        return false
+    }
+
+    private fun applyOnce(displayId: Int, sourceApk: String): Boolean {
+        val quotedApk = "'" + sourceApk.replace("'", "'\\''") + "'"
+        val mode = detectSuCommandMode(uid = "0", timeoutMillis = 5000)
+        val process = ProcessBuilder(*mode.arguments(
+            "CLASSPATH=$quotedApk app_process /system/bin ${DisplayImePolicy::class.java.name}", uid = "0"))
+            .redirectErrorStream(true).start()
+        try {
+            process.outputStream.bufferedWriter().use { input ->
+                input.write(JSONObject().put("displayId", displayId).put("policy", POLICY_LOCAL).toString())
+            }
+            var result: JSONObject? = null
+            process.inputStream.bufferedReader().useLines { lines ->
+                lines.forEach { line -> if (line.startsWith(MARKER)) result = JSONObject(line.removePrefix(MARKER)) }
+            }
+            check(process.waitFor(5, TimeUnit.SECONDS) && process.exitValue() == 0) { "IME_POLICY_UNAVAILABLE" }
+            return result?.optBoolean("ok") == true
+        } finally {
+            process.destroy()
+        }
     }
 
     @JvmStatic
     fun main(args: Array<String>) {
         val result = try {
-            check(Process.myUid() == 2000) { "SHELL_IDENTITY_REQUIRED" }
+            // Root (0) is the path the caller uses; shell (2000) is accepted
+            // too so the same helper also works from Eta-style callers.
+            check(Process.myUid() == 0 || Process.myUid() == 2000) { "PRIVILEGED_IDENTITY_REQUIRED" }
             val bytes = System.`in`.readNBytes(4097)
             val request = JSONObject(bytes.toString(Charsets.UTF_8))
             val displayId = request.getInt("displayId")

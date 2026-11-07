@@ -23,7 +23,7 @@ abstract class CommandBackend(protected val context: Context) : VirtualScreenBac
         result {
             check(active == null) { "DISPLAY_ALREADY_ACTIVE" }
             val response = connect(config).checked()
-            VirtualScreenHandle(response.getString("handleId"), response.getInt("displayId"), config).also { check(it.displayId > 0); active = it }
+            VirtualScreenHandle(response.getString("handleId"), response.getInt("displayId"), config, response.optBoolean("ime_policy", false)).also { check(it.displayId > 0); active = it }
         }.onFailure { withContext(NonCancellable) { disconnect() } }
     } catch(cancelled: CancellationException) {
         // Cancellation can occur after the privileged process created its display

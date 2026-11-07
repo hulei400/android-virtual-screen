@@ -134,7 +134,7 @@ class McpToolRegistry(private val sessions: VirtualScreenSessionManager,
                 "get_status" -> {
                     val controller=sessions.leaseStatus(); val state=sessions.state.value; val c=state.capabilities
                     OperationEnvelope(true,sessionId=state.sessionId,values=mapOf("backend" to state.backend.wireName,"status" to state.status.name.lowercase(),"display_id" to state.displayId,
-                        "controller" to controller?.owner,"takeover_count" to state.takeoverCount,"preview_status" to state.previewStatus.name.lowercase(),"lease_remaining_ms" to controller?.let { (it.expiresAtMillis-System.nanoTime()/1000000).coerceAtLeast(0) },
+                        "controller" to controller?.owner,"takeover_count" to state.takeoverCount,"ime_policy" to state.imePolicy,"preview_status" to state.previewStatus.name.lowercase(),"lease_remaining_ms" to controller?.let { (it.expiresAtMillis-System.nanoTime()/1000000).coerceAtLeast(0) },
                         "capabilities" to mapOf("display" to c.displayCreation.name,"capture" to c.frameCapture.name,"input" to c.inputInjection.name,"nodes" to c.accessibilityNodes.name,"screen_off" to c.screenOff.name),"error_code" to state.errorCode))
                 }
                 "get_request_receipt" -> {

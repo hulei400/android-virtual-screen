@@ -35,6 +35,8 @@ data class SessionState(
     val lease: Lease? = null,
     /** Monotonic count of phone takeovers; agents compare it with the last observe to spot screen changes. */
     val takeoverCount: Long = 0,
+    /** True when the current display's IME policy was set to LOCAL (keyboard can show on it). */
+    val imePolicy: Boolean = false,
     val observationId: String? = null,
     val observationGeneration: Long = 0,
     val frame: Bitmap? = null,
@@ -289,6 +291,7 @@ class VirtualScreenSessionManager(
             epoch.incrementAndGet()
             update { it.copy(status = SessionStatus.RUNNING, sessionId = sid, displayId = created.displayId,
                 config = config, observationId = null, observationGeneration = epoch.get(),
+                imePolicy = created.imePolicy,
                 capabilities = it.capabilities.copy(displayCreation = CapabilityStatus.AVAILABLE, frameCapture = CapabilityStatus.UNKNOWN, inputInjection = CapabilityStatus.UNKNOWN,
                     screenOff = if (config.allowScreenOff) CapabilityStatus.UNKNOWN else CapabilityStatus.UNAVAILABLE)) }
             OperationEnvelope(true, sessionId = sid, values = mapOf("display_id" to created.displayId, "generation" to epoch.get()))
@@ -319,7 +322,7 @@ class VirtualScreenSessionManager(
         finally {
             handle = null; synchronized(stateLock) { latest = null; latestNodes = null }; epoch.incrementAndGet()
             restartApprovals.cancelAll()
-            update { it.copy(status = SessionStatus.STOPPED, sessionId = null, displayId = null, observationId = null, frame = null, observationGeneration = epoch.get(),previewStatus=PreviewStatus.HIDDEN, errorCode = null) }
+            update { it.copy(status = SessionStatus.STOPPED, sessionId = null, displayId = null, observationId = null, frame = null, observationGeneration = epoch.get(),previewStatus=PreviewStatus.HIDDEN, errorCode = null, imePolicy = false) }
         }
     }
     suspend fun launch(owner: String, token: String, component: String, uri: String? = null, purpose: String = "", clientName: String = ""): OperationEnvelope {
