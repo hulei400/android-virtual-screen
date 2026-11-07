@@ -250,7 +250,11 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
         val tasks = runningTasks().filter(::matchesTarget)
         // Some ROMs refuse to host a non-resizeable activity on a secondary display;
         // they put it on the phone screen instead. Keep a distinct error for that case.
-        check(tasks.isNotEmpty() && tasks.all { taskDisplay(it) == displayId }) {
+        // A multi-window component (e.g. Edge's second-window activity) can
+        // legitimately own tasks on two displays at once (phone + virtual
+        // display), so only require that at least one of its tasks is on this
+        // display. Requiring all of them here rejected successful launches.
+        check(tasks.any { taskDisplay(it) == displayId }) {
             if (!resizeable) "DISPLAY_APP_UNSUPPORTED" else "DISPLAY_LAUNCH_MISMATCH"
         }
         hostedTasks.addAll(tasks.map { it.taskId })
