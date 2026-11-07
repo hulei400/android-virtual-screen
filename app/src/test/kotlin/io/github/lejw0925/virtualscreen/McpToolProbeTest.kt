@@ -39,7 +39,7 @@ class McpToolProbeTest {
         assertFalse("A focus tap must not replace the counter effect check", tap.passed)
         assertEquals("PROBE_EFFECT_NOT_CONFIRMED", tap.code)
         assertTrue(report.failedTools.any { it.tool == "tap_at" })
-        assertEquals(18, report.passedTools)
+        assertEquals(19, report.passedTools)
         assertEquals(CapabilityStatus.UNAVAILABLE, report.capabilities.inputInjection)
         assertTrue(report.results.single { it.tool == "input_text" }.passed)
     }
@@ -52,7 +52,7 @@ class McpToolProbeTest {
         assertFalse("An input timeout must remain visible even when its effect arrives", tap.passed)
         assertEquals("PROBE_INPUT_FAILED", tap.code)
         assertTrue(report.failedTools.any { it.tool == "tap_at" })
-        assertEquals(18, report.passedTools)
+        assertEquals(19, report.passedTools)
         assertEquals(CapabilityStatus.UNAVAILABLE, report.capabilities.inputInjection)
         assertTrue(report.results.single { it.tool == "input_text" }.passed)
     }
