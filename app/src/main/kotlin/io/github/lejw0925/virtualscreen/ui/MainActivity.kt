@@ -419,7 +419,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
         }
         if(state.displayId!=null) FloatingControls(state,server.running,expanded,{ expanded=it },tool?.purpose,tool?.phase,live,pip,settings.pipEnabled,settings.viewOnly,
             onToggleViewOnly={ expanded=false; onToggleViewOnly() },
-            onFloat={ expanded=false; openFloatViewer() },
+            onFloat={ expanded=false; if(FloatViewer.canDrawOverlays(app)) app.floatViewer.toggle() else showOverlayPrompt=true },
             onSettings=onSettings,onKeyboard={ expanded=false; keyboard=true },onApps={ task { applications=app.sessions.discoverApplications(includeIcons=true).filter { it.exported && it.packageName!=app.packageName }; chooseApp=true }; expanded=false },
             onPip={ expanded=false; app.floatViewer.hide(); onPip() }, onEnd={
                 val session = state.sessionId ?: return@FloatingControls
@@ -449,7 +449,6 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
             Row(Modifier.padding(16.dp),verticalAlignment=Alignment.CenterVertically) { Text(localizedError(l,error!!),modifier=Modifier.weight(1f),style=MaterialTheme.typography.bodyMedium); Action(l.text("关闭","Dismiss","關閉")) { error=null } }
         }
     }
-    fun openFloatViewer() { if(FloatViewer.canDrawOverlays(app)) app.floatViewer.toggle() else showOverlayPrompt=true }
     if(showOverlayPrompt) AppDialog(onDismissRequest={ showOverlayPrompt=false }) {
         Text(l.text("悬浮窗需要权限","Float window needs a permission","懸浮窗需要權限"),style=MaterialTheme.typography.headlineSmall,color=MaterialTheme.colorScheme.onSurface)
         Text(l.text("请在系统设置里打开“在其他应用的上层显示”，再点一次悬浮窗。","Allow “display over other apps” in system settings, then tap the float window button again.","請在系統設定裡開啟「在其他應用的上層顯示」，再點一次懸浮窗。"),style=MaterialTheme.typography.bodyMedium)

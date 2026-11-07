@@ -107,7 +107,7 @@ class VirtualScreenApplication : Application() {
 
     lateinit var settings: io.github.lejw0925.virtualscreen.core.AppSettings
         private set
-    val floatViewer by lazy { io.github.lejw0925.virtualscreen.ui.FloatViewer(this) }
+    internal val floatViewer by lazy { io.github.lejw0925.virtualscreen.ui.FloatViewer(this) }
 
     override fun onCreate() {
         super.onCreate()

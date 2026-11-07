@@ -25,6 +25,8 @@ import android.widget.TextView
 import io.github.lejw0925.virtualscreen.VirtualScreenApplication
 import io.github.lejw0925.virtualscreen.backend.LiveGeometry
 import io.github.lejw0925.virtualscreen.core.SessionState
+import io.github.lejw0925.virtualscreen.core.failure
+import io.github.lejw0925.virtualscreen.core.runtime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -255,7 +257,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         }
         contentView.addView(viewer)
         val close = ImageButton(app).apply {
-            setImageResource(android.R.drawable.ic_menu_close)
+            setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x80000000.toInt()) }
             layoutParams = FrameLayout.LayoutParams((32f * d).roundToInt(), (32f * d).roundToInt(), Gravity.TOP or Gravity.END).apply {
                 setMargins(0, (6f * d).roundToInt(), (6f * d).roundToInt(), 0)
