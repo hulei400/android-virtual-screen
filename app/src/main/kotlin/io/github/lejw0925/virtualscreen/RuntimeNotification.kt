@@ -29,6 +29,9 @@ internal data class RuntimeNotificationContent(
     @DrawableRes val icon: Int = R.drawable.ic_status_ready,
     val displaySession: String? = null,
     val approval: NotificationApproval? = null,
+    /** True while the float window is in control mode; the notification's
+     *  first action then offers 只看 instead of 接管. */
+    val controlMode: Boolean = false,
 )
 
 internal enum class NotificationApprovalKind { CONTROL, APP_RESTART }
@@ -85,7 +88,8 @@ internal object RuntimeNotification {
 
     fun describe(context: Context, screen: SessionState, server: McpServerState, activity: ToolActivity?,
                  tunnel: TunnelState, changing: Boolean, controlRequests: List<ControlRequest> = emptyList(),
-                 restartRequests: List<AppRestartRequest> = emptyList()): RuntimeNotificationContent {
+                 restartRequests: List<AppRestartRequest> = emptyList(),
+                 controlMode: Boolean = false): RuntimeNotificationContent {
         val approval = restartRequests.firstOrNull()?.let { NotificationApproval.restart(context, it) }
             ?: controlRequests.firstOrNull()?.let { NotificationApproval.control(context, it) }
         val remote = screen.lease.let { it != null && it.owner != VirtualScreenSessionManager.PHONE_CLIENT }
@@ -131,7 +135,7 @@ internal object RuntimeNotification {
         }
         return RuntimeNotificationContent(approval?.title ?: context.getString(title), detail, context.getString(chip), working,
             screen.sessionId.takeIf { screen.displayId != null && screen.status == SessionStatus.RUNNING },
-            icon, screen.sessionId.takeIf { screen.displayId != null }, approval)
+            icon, screen.sessionId.takeIf { screen.displayId != null }, approval, controlMode)
     }
 
     @SuppressLint("NewApi")
@@ -154,8 +158,17 @@ internal object RuntimeNotification {
         when {
             content.approval != null -> approvalActions(context, content.approval).forEach(builder::addAction)
             content.displaySession != null -> {
-                builder.addAction(notificationAction(context, R.drawable.ic_notification_takeover,
-                    R.string.notification_takeover, action(2, VirtualScreenForegroundService.ACTION_TAKEOVER)))
+                // Fluid Cloud toggle: in control mode the action offers 只看
+                // (back to view-only), otherwise 接管. Same switch as the
+                // float window's double-tap, so the window itself needs no
+                // button over the content.
+                if (content.controlMode) {
+                    builder.addAction(notificationAction(context, R.drawable.ic_notification_takeover,
+                        R.string.notification_view_only, action(2, VirtualScreenForegroundService.ACTION_VIEW_ONLY)))
+                } else {
+                    builder.addAction(notificationAction(context, R.drawable.ic_notification_takeover,
+                        R.string.notification_takeover, action(2, VirtualScreenForegroundService.ACTION_TAKEOVER)))
+                }
                 builder.addAction(notificationAction(context, R.drawable.ic_notification_close,
                     R.string.notification_close_display, action(1, VirtualScreenForegroundService.ACTION_CLOSE_DISPLAY)))
             }

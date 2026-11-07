@@ -26,6 +26,7 @@ class VirtualScreenForegroundService : Service() {
     companion object {
         const val ACTION_STOP = "io.github.lejw0925.virtualscreen.STOP"
         const val ACTION_TAKEOVER = "io.github.lejw0925.virtualscreen.TAKEOVER"
+        const val ACTION_VIEW_ONLY = "io.github.lejw0925.virtualscreen.VIEW_ONLY"
         const val ACTION_CLOSE_DISPLAY = "io.github.lejw0925.virtualscreen.CLOSE_DISPLAY"
         internal const val ACTION_ALLOW_ONCE = "io.github.lejw0925.virtualscreen.ALLOW_ONCE"
         internal const val ACTION_ALLOW_ALWAYS = "io.github.lejw0925.virtualscreen.ALLOW_ALWAYS"
@@ -95,9 +96,10 @@ class VirtualScreenForegroundService : Service() {
             val runtime = combine(app.mcp.flow, app.mcp.activity, app.tunnels.flow, app.mcpChanging) { server, activity, tunnel, changing ->
                 Triple(server to activity, tunnel, changing)
             }
-            combine(app.sessions.state, runtime, app.mcp.approvals.pending, app.sessions.restartApprovals.pending) { screen, status, control, restart ->
+            combine(app.sessions.state, runtime, app.mcp.approvals.pending, app.sessions.restartApprovals.pending,
+                app.floatViewer.controlModeFlow) { screen, status, control, restart, controlMode ->
                 RuntimeNotification.describe(this@VirtualScreenForegroundService, screen, status.first.first, status.first.second,
-                    status.second, status.third, control, restart)
+                    status.second, status.third, control, restart, controlMode)
             }.combine(dismissedLiveSession) { content, dismissed -> content to dismissed.takeIf { it == content.liveSession } }
                 .distinctUntilChanged().collect { (content, dismissed) ->
                     manager.notify(ID, RuntimeNotification.build(this@VirtualScreenForegroundService, content, dismissed))
@@ -210,7 +212,19 @@ class VirtualScreenForegroundService : Service() {
             intent?.action?.substringAfterLast('.') ?: "start")
         when(intent?.action) {
             ACTION_STOP -> { app.sessions.phoneTakeover(); app.stopRuntime(); stopSelf() }
-            ACTION_TAKEOVER -> if (isCurrentDisplayAction(intent)) app.sessions.phoneTakeover()
+            ACTION_TAKEOVER -> if (isCurrentDisplayAction(intent)) {
+                // Fluid Cloud toggle: take the lease AND flip the float
+                // window into control mode, same as its double-tap.
+                app.sessions.phoneTakeover()
+                app.floatViewer.setControlModeExternal(true)
+            }
+            ACTION_VIEW_ONLY -> if (isCurrentDisplayAction(intent)) {
+                // Back to view-only: hand control back to the agent and
+                // flip the float window out of control mode (also closes
+                // the keyboard bridge).
+                app.sessions.allowRemoteControl()
+                app.floatViewer.setControlModeExternal(false)
+            }
             ACTION_CLOSE_DISPLAY -> if (isCurrentDisplayAction(intent)) {
                 // Fence input immediately. The notification closes only its display, not MCP or tunnels.
                 val session = intent.getStringExtra(RuntimeNotification.EXTRA_SESSION)!!

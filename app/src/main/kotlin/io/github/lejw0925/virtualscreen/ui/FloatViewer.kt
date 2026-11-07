@@ -40,6 +40,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -99,6 +102,10 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private var resizeGripLeft: View? = null
     /** True while the user is directly operating the float window's content. */
     private var controlMode = false
+    /** Published so the foreground service's notification can show the matching
+     *  Fluid Cloud action (接管 / 只看) and rebuild when the mode flips. */
+    private val _controlModeFlow = MutableStateFlow(false)
+    val controlModeFlow: StateFlow<Boolean> = _controlModeFlow.asStateFlow()
     private var contentTouch = false
     /** Keyboard bridge (see [openImeBridge]): hidden sink the phone keyboard
      *  types into; its text is committed to the virtual display's focused
@@ -298,8 +305,18 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private fun setControlMode(on: Boolean) {
         if (controlMode == on) return
         controlMode = on
+        _controlModeFlow.value = on
         if (!on) { liveView?.cancelGesture(); closeImeBridge() }
         app.activityLog.runtime("float_viewer", "control_mode", if (on) "on" else "off")
+    }
+    /** Set control mode from outside the window (Fluid Cloud notification
+     *  action): same switch as the double-tap, with the same vibration
+     *  confirmation and keyboard-bridge check. */
+    fun setControlModeExternal(on: Boolean) {
+        if (controlMode == on) return
+        setControlMode(on)
+        buzz(on)
+        if (on) checkImeBridge()
     }
     /** Double-tap toggles control mode; the phone vibrates to confirm the
      *  switch, since there is no visible button left to show the mode. */

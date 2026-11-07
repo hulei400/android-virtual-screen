@@ -126,6 +126,19 @@ class RuntimeNotificationTest {
         assertNull(notification.bigContentView)
     }
 
+    @Test fun controlModeOffersViewOnlyInsteadOfTakeover() {
+        val content = RuntimeNotification.describe(context,
+            SessionState(status = SessionStatus.RUNNING, sessionId = "screen-1", displayId = 8,
+                lease = Lease("agent", "private-token", Long.MAX_VALUE, 1)),
+            McpServerState(running = true), null,
+            TunnelState(), changing = false, controlMode = true)
+        val notification = RuntimeNotification.build(context, content)
+
+        assertTrue(content.controlMode)
+        assertEquals(listOf(context.getString(R.string.notification_view_only), context.getString(R.string.notification_close_display)),
+            notification.actions.map { it.title.toString() })
+    }
+
     @Test fun activityFromAnotherControllerDoesNotExposeAnUnrelatedPurpose() {
         val content = RuntimeNotification.describe(context,
             SessionState(status = SessionStatus.RUNNING, sessionId = "screen-1", displayId = 8,
