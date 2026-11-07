@@ -246,6 +246,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     }
     fun hide() {
         if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { hide() }; return }
+        if (root != null) savePosition()
         setControlMode(false)
         stateJob?.cancel(); stateJob = null
         previewJob?.cancel(); previewJob = null
@@ -435,6 +436,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         collapsed = true; collapsedSide = side
         setControlMode(false)
         savedX = p.x; savedY = p.y; savedW = p.width; savedH = p.height
+        savePosition()
         content?.visibility = View.GONE
         resizeGrip?.visibility = View.GONE
         resizeGripLeft?.visibility = View.GONE
@@ -526,8 +528,15 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         return x.coerceIn(0, (screenW - w).coerceAtLeast(0)) to y.coerceIn(0, (screenH - h).coerceAtLeast(0))
     }
     private fun savePosition() {
+        if (collapsed) {
+            // Collapsed into the edge bar: persist the pre-collapse geometry,
+            // not the bar's own position — the bar is not a place to restore to.
+            if (savedW > 0 && savedH > 0) {
+                prefs.edit().putInt("pos_x", savedX).putInt("pos_y", savedY).putInt("width", savedW).putInt("height", savedH).apply()
+            }
+            return
+        }
         val p = params ?: return
-        if (collapsed) return
         prefs.edit().putInt("pos_x", p.x).putInt("pos_y", p.y).putInt("width", p.width).putInt("height", p.height).apply()
     }
     private fun updateLayout() {
