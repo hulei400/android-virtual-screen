@@ -14,7 +14,6 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
-import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewOutlineProvider
@@ -46,7 +45,8 @@ import kotlin.math.roundToInt
  * and preview channel — no Eta code is copied.
  *
  * Monitor-only, like Eta's observe mode: content touches never inject from the float
- * window. Single-finger drag moves it, pinch zooms, double-tap goes fullscreen, dragging
+ * window. Single-finger drag moves it, dragging the bottom-right corner grip resizes it,
+ * double-tap goes fullscreen, dragging
  * to a screen edge collapses it to a narrow trigger bar (tap the bar, or drag it outward,
  * to expand back). Take over from the fullscreen viewer instead.
  *
@@ -79,6 +79,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private var content: FrameLayout? = null
     private var liveView: LiveDisplayView? = null
     private var triggerBar: TextView? = null
+    private var resizeGrip: View? = null
     private var closeButton: ImageButton? = null
     private var params: WindowManager.LayoutParams? = null
     private var chromeTouch = false
@@ -90,7 +91,8 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private var collapsedDuringDrag = false
     private var savedX = 0; private var savedY = 0; private var savedW = 0; private var savedH = 0
     private var downRawX = 0f; private var downRawY = 0f; private var downWinX = 0; private var downWinY = 0
-    private var moved = false; private var scaling = false
+    private var downWinW = 0; private var downWinH = 0
+    private var moved = false; private var resizing = false
     private var lastTapTime = 0L; private var lastTapX = 0f; private var lastTapY = 0f
     private var triggerDownX = 0f; private var triggerMoved = false
     private val configCallbacks = object : ComponentCallbacks {
@@ -111,21 +113,6 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         p.y = p.y.coerceIn(0, (screenH - tall).coerceAtLeast(0))
         updateLayout()
     }
-    private val scaleListener = object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-        override fun onScale(detector: ScaleGestureDetector): Boolean {
-            if (collapsed) return false
-            val p = params ?: return false
-            val aspect = currentAspect()
-            var w = (p.width * detector.scaleFactor).roundToInt().coerceIn(minWidthPx, maxWidthPx)
-            var h = (w / aspect).roundToInt()
-            if (h > maxHeightPx) { h = maxHeightPx; w = (h * aspect).roundToInt() }
-            p.width = w; p.height = h
-            updateLayout()
-            return true
-        }
-        override fun onScaleEnd(detector: ScaleGestureDetector) { savePosition() }
-    }
-    private val scaleDetector = ScaleGestureDetector(app, scaleListener)
     // The root intercepts every touch except ones starting on the close button or the
     // trigger bar, so window gestures always win and content touches never inject.
     private fun isOnChrome(event: MotionEvent): Boolean {
@@ -136,16 +123,24 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             event.rawY >= loc[1] && event.rawY < loc[1] + view.height
     }
     private fun onWindowTouch(event: MotionEvent): Boolean {
-        scaleDetector.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downRawX = event.rawX; downRawY = event.rawY
                 downWinX = params?.x ?: 0; downWinY = params?.y ?: 0
-                moved = false; scaling = scaleDetector.isInProgress
+                downWinW = params?.width ?: 0; downWinH = params?.height ?: 0
+                moved = false; resizing = isInResizeZone(event)
             }
-            MotionEvent.ACTION_POINTER_DOWN -> { scaling = true }
             MotionEvent.ACTION_MOVE -> {
-                if (event.pointerCount == 1 && !scaling && !collapsedDuringDrag) {
+                if (resizing) {
+                    // Corner drag resizes: width follows the finger, height
+                    // follows the live frame aspect so no black bars appear.
+                    val p = params ?: return true
+                    val aspect = currentAspect()
+                    var w = (downWinW + (event.rawX - downRawX)).roundToInt().coerceIn(minWidthPx, maxWidthPx)
+                    var h = (w / aspect).roundToInt()
+                    if (h > maxHeightPx) { h = maxHeightPx; w = (h * aspect).roundToInt() }
+                    if (w != p.width || h != p.height) { p.width = w; p.height = h; moved = true; updateLayout() }
+                } else if (event.pointerCount == 1 && !collapsedDuringDrag) {
                     val dx = (event.rawX - downRawX).roundToInt(); val dy = (event.rawY - downRawY).roundToInt()
                     if (abs(dx) > touchSlopPx || abs(dy) > touchSlopPx) moved = true
                     if (moved) {
@@ -159,7 +154,10 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             }
             MotionEvent.ACTION_UP -> {
                 val snapped = collapsedDuringDrag; collapsedDuringDrag = false
-                if (!moved && !scaling) {
+                if (resizing) {
+                    resizing = false
+                    savePosition()
+                } else if (!moved) {
                     if (isDoubleTap(event)) goFullscreen()
                     else { lastTapTime = SystemClock.uptimeMillis(); lastTapX = event.x; lastTapY = event.y }
                 } else if (snapped) {
@@ -174,9 +172,17 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                     else savePosition()
                 }
             }
-            MotionEvent.ACTION_CANCEL -> { collapsedDuringDrag = false }
+            MotionEvent.ACTION_CANCEL -> { collapsedDuringDrag = false; resizing = false }
         }
         return true
+    }
+    /** Bottom-right corner grip zone (about 40dp): a drag starting here resizes
+     *  the window instead of moving it. Pinch zoom is gone; this replaces it. */
+    private fun isInResizeZone(event: MotionEvent): Boolean {
+        if (collapsed) return false
+        val p = params ?: return false
+        val zone = 40f * density
+        return event.rawX >= p.x + p.width - zone && event.rawY >= p.y + p.height - zone
     }
     private val triggerTouch = View.OnTouchListener { _, event ->
         when (event.actionMasked) {
@@ -218,7 +224,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         runCatching { app.unregisterComponentCallbacks(configCallbacks) }
         liveView?.setResumed(false)
         liveView?.dispose()
-        liveView = null; closeButton = null
+        liveView = null; closeButton = null; resizeGrip = null
         root?.let { runCatching { windowManager.removeView(it) } }
         root = null; content = null; triggerBar = null; params = null
         collapsed = false; collapsedDuringDrag = false
@@ -280,6 +286,26 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         }
         rootView.addView(contentView)
         rootView.addView(trigger)
+        // Bottom-right corner grip: three diagonal lines marking the drag-to-resize zone.
+        val grip = object : View(app) {
+            private val gripPaint = android.graphics.Paint().apply {
+                color = 0xBFFFFFFF.toInt(); strokeWidth = 2f * d
+                strokeCap = android.graphics.Paint.Cap.ROUND
+            }
+            override fun onDraw(canvas: android.graphics.Canvas) {
+                super.onDraw(canvas)
+                val w = width.toFloat(); val h = height.toFloat()
+                canvas.drawLine(w * 0.85f, h * 0.30f, w * 0.30f, h * 0.85f, gripPaint)
+                canvas.drawLine(w * 0.95f, h * 0.55f, w * 0.55f, h * 0.95f, gripPaint)
+                canvas.drawLine(w * 0.70f, h * 0.10f, w * 0.10f, h * 0.70f, gripPaint)
+            }
+        }.apply {
+            layoutParams = FrameLayout.LayoutParams((36f * d).roundToInt(), (36f * d).roundToInt(), Gravity.BOTTOM or Gravity.END).apply {
+                setMargins(0, 0, (2f * d).roundToInt(), (2f * d).roundToInt())
+            }
+        }
+        rootView.addView(grip)
+        resizeGrip = grip
         windowManager.addView(rootView, p)
         root = rootView; content = contentView; liveView = viewer; triggerBar = trigger; params = p
         viewer.setResumed(true)
@@ -322,6 +348,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         collapsed = true; collapsedSide = side
         savedX = p.x; savedY = p.y; savedW = p.width; savedH = p.height
         content?.visibility = View.GONE
+        resizeGrip?.visibility = View.GONE
         triggerBar?.text = if (side == SIDE_LEFT) "›" else "‹"
         triggerBar?.visibility = View.VISIBLE
         val barW = (28f * density).roundToInt(); val barH = (112f * density).roundToInt()
@@ -338,6 +365,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         collapsed = false
         triggerBar?.visibility = View.GONE
         content?.visibility = View.VISIBLE
+        resizeGrip?.visibility = View.VISIBLE
         p.width = savedW; p.height = savedH
         p.x = savedX.coerceIn(0, (screenW - p.width).coerceAtLeast(0))
         p.y = savedY.coerceIn(0, (screenH - p.height).coerceAtLeast(0))
@@ -356,7 +384,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         if (isDouble) lastTapTime = 0L
         return isDouble
     }
-    /** Keep the window glued to the live frame aspect: a stale or pinched size
+    /** Keep the window glued to the live frame aspect: a stale or resized size
      *  otherwise leaves black bars on the sides (or top/bottom). Runs on every
      *  frame but is a no-op once the aspect matches (2% deadband). */
     private fun fitToFrameAspect() {
