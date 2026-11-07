@@ -11,18 +11,27 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.provider.Settings
+import android.text.Editable
+import android.text.InputType
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewOutlineProvider
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.ImageButton
 import android.widget.TextView
 import io.github.lejw0925.virtualscreen.VirtualScreenApplication
+import io.github.lejw0925.virtualscreen.backend.BackendOperation
 import io.github.lejw0925.virtualscreen.backend.LiveGeometry
+import io.github.lejw0925.virtualscreen.core.ScreenAccessibilityService
 import io.github.lejw0925.virtualscreen.core.SessionState
 import io.github.lejw0925.virtualscreen.core.failure
 import io.github.lejw0925.virtualscreen.core.runtime
@@ -34,6 +43,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -44,11 +54,17 @@ import kotlin.math.roundToInt
  * collapsed state); this is an original implementation against this app's LiveDisplayView
  * and preview channel — no Eta code is copied.
  *
- * Monitor-only, like Eta's observe mode: content touches never inject from the float
- * window. Single-finger drag moves it, dragging either bottom corner grip resizes it,
- * double-tap goes fullscreen, dragging
- * to a screen edge collapses it to a narrow trigger bar (tap the bar, or drag it outward,
- * to expand back). Take over from the fullscreen viewer instead.
+ * No buttons on the window at all (the close and takeover buttons were
+ * removed — they got in the way of watching): the window always pops up
+ * view-only at the very top-right corner, single-finger drag moves it,
+ * dragging either bottom corner grip resizes it, dragging to a screen edge
+ * collapses it to a narrow trigger bar (tap the bar, or drag it outward, to
+ * expand back). Double-tap toggles control mode — content touches then go
+ * straight into the app, same as the fullscreen viewer — and the phone
+ * vibrates once to confirm the switch (one buzz for control on, two for
+ * view-only). When a text field is focused in control mode, the phone
+ * keyboard pops up outside the window and typing is committed to the field
+ * (keyboard bridge, below).
  *
  * The live SurfaceFlinger mirror serves one viewer at a time: while the float window is
  * shown it holds the mirror and the fullscreen viewer falls back to JPEG frames, then
@@ -81,11 +97,17 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private var triggerBar: TextView? = null
     private var resizeGrip: View? = null
     private var resizeGripLeft: View? = null
-    private var closeButton: ImageButton? = null
-    private var takeoverButton: TextView? = null
     /** True while the user is directly operating the float window's content. */
     private var controlMode = false
     private var contentTouch = false
+    /** Keyboard bridge (see [openImeBridge]): hidden sink the phone keyboard
+     *  types into; its text is committed to the virtual display's focused
+     *  field. */
+    private var imeSink: EditText? = null
+    private var imeBridgeOn = false
+    private var imeShowJob: Job? = null
+    private var imeCommitJob: Job? = null
+    private var imeCheckJob: Job? = null
     private var params: WindowManager.LayoutParams? = null
     private var chromeTouch = false
     private var stateJob: Job? = null
@@ -118,13 +140,12 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         p.y = p.y.coerceIn(0, (screenH - tall).coerceAtLeast(0))
         updateLayout()
     }
-    // The root intercepts every touch except ones starting on a chrome control
-    // (close button, takeover button) or the trigger bar, so window gestures
-    // always win and content touches never inject — unless control mode is on,
-    // in which case content touches go to the app and only chrome and the
-    // resize grips still move/resize the window.
+    // The root intercepts every touch except ones starting on the trigger
+    // bar, so window gestures always win and content touches never inject —
+    // unless control mode is on, in which case content touches go to the app
+    // and only the resize grips still move/resize the window.
     private fun isOnChrome(event: MotionEvent): Boolean {
-        val targets = if (collapsed) listOfNotNull(triggerBar) else listOfNotNull(closeButton, takeoverButton)
+        val targets = if (collapsed) listOfNotNull(triggerBar) else emptyList<TextView>()
         return targets.any { view ->
             if (view.visibility != View.VISIBLE) return@any false
             val loc = IntArray(2); view.getLocationOnScreen(loc)
@@ -174,7 +195,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                     resizing = false
                     saveSize()
                 } else if (!moved) {
-                    if (isDoubleTap(event)) goFullscreen()
+                    if (isDoubleTap(event)) toggleControlMode()
                     else { lastTapTime = SystemClock.uptimeMillis(); lastTapX = event.x; lastTapY = event.y }
                 } else if (snapped) {
                     // Collapsed mid-drag: glue the bar to the edge at once. It
@@ -246,14 +267,16 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     }
     fun hide() {
         if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { hide() }; return }
+        closeImeBridge()
         setControlMode(false)
         stateJob?.cancel(); stateJob = null
         previewJob?.cancel(); previewJob = null
+        imeCheckJob?.cancel(); imeCheckJob = null
         root?.removeCallbacks(sinkRunnable)
         runCatching { app.unregisterComponentCallbacks(configCallbacks) }
         liveView?.setResumed(false)
         liveView?.dispose()
-        liveView = null; closeButton = null; takeoverButton = null; resizeGrip = null; resizeGripLeft = null
+        liveView = null; imeSink = null; resizeGrip = null; resizeGripLeft = null
         root?.let { runCatching { windowManager.removeView(it) } }
         root = null; content = null; triggerBar = null; params = null
         collapsed = false; collapsedDuringDrag = false
@@ -262,17 +285,31 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     // Control mode: the float window's content becomes directly operable
     // (taps and scrolls inject into the virtual display, same as the
     // fullscreen viewer). Off by default — the window always pops up
-    // view-only. Turning it off cancels any in-flight gesture.
+    // view-only. Turning it off cancels any in-flight gesture and closes
+    // the keyboard bridge.
     private fun setControlMode(on: Boolean) {
         if (controlMode == on) return
         controlMode = on
-        if (!on) liveView?.cancelGesture()
-        takeoverButton?.background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(0x00000000)
-            setStroke((1.5f * density).roundToInt(), if (on) 0x992E9E44.toInt() else 0x33FFFFFF)
-        }
+        if (!on) { liveView?.cancelGesture(); closeImeBridge() }
         app.activityLog.runtime("float_viewer", "control_mode", if (on) "on" else "off")
+    }
+    /** Double-tap toggles control mode; the phone vibrates to confirm the
+     *  switch, since there is no visible button left to show the mode. */
+    private fun toggleControlMode() {
+        val on = !controlMode
+        setControlMode(on)
+        buzz(on)
+        if (on) checkImeBridge()
+    }
+    private fun buzz(controlOn: Boolean) {
+        val vibrator = app.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator ?: return
+        if (!vibrator.hasVibrator()) return
+        val effect = if (controlOn) {
+            VibrationEffect.createOneShot(80, VibrationEffect.DEFAULT_AMPLITUDE)
+        } else {
+            VibrationEffect.createWaveform(longArrayOf(0, 40, 80, 40), -1)
+        }
+        runCatching { vibrator.vibrate(effect) }
     }
     /** A 36dp corner grip: three diagonal lines. `mirror` flips it for the
      *  bottom-left corner. Purely visual — the resize zone is detected from
@@ -340,43 +377,47 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             // mode the user operates the app directly, same as the fullscreen
             // viewer (beginPhoneGesture takes the lease for the gesture).
             onManualDown = { if (controlMode) app.sessions.beginPhoneGesture().token else null }
-            onManualComplete = { token -> app.sessions.finishPhoneControl(token) }
+            onManualComplete = { token ->
+                app.sessions.finishPhoneControl(token)
+                checkImeBridge()
+            }
             onCompatibilityInput = { op -> scope.launch { runCatching { app.sessions.phoneTakeover(); phoneInput(app, op) }.onFailure { app.activityLog.runtime("float_viewer", "control_input", "failed") } } }
             onError = { code -> app.activityLog.runtime("float_viewer", "error", code) }
         }
         contentView.addView(viewer)
-        val close = ImageButton(app).apply {
-            setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x80000000.toInt()) }
-            layoutParams = FrameLayout.LayoutParams((32f * d).roundToInt(), (32f * d).roundToInt(), Gravity.TOP or Gravity.END).apply {
-                setMargins(0, (6f * d).roundToInt(), (6f * d).roundToInt(), 0)
+        // Hidden input sink for the keyboard bridge: the system keyboard
+        // never appears for the virtual display's fields on its own (the
+        // LOCAL and FALLBACK display IME policies both failed — the policy
+        // is set, the keyboard just never shows), so typing goes through
+        // this 1x1 sink on the phone display and is committed to the
+        // virtual display's focused field (see [openImeBridge]).
+        val sink = EditText(app).apply {
+            layoutParams = FrameLayout.LayoutParams(1, 1)
+            setBackgroundColor(0x00000000)
+            setTextColor(0x00000000)
+            setCursorVisible(false)
+            inputType = InputType.TYPE_CLASS_TEXT
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    val text = s?.toString() ?: return
+                    imeCommitJob?.cancel()
+                    imeCommitJob = scope.launch {
+                        delay(200)
+                        if (!imeBridgeOn) return@launch
+                        runCatching { app.sessions.phoneTakeover(); phoneInput(app, BackendOperation.Text(text, replace = true)) }
+                            .onFailure { app.activityLog.runtime("float_viewer", "ime_commit", "failed") }
+                    }
+                }
+            })
+            setOnEditorActionListener { _, actionId, _ ->
+                if (actionId == EditorInfo.IME_ACTION_DONE) { commitImeBridge(); true } else false
             }
-            setOnClickListener { hide(); suppressAutoShow() }
         }
-        contentView.addView(close)
-        closeButton = close
-        // Takeover toggle (replaces the #14 keyboard bridge): the float window
-        // still pops up view-only by default; tapping this makes its content
-        // directly operable — taps and scrolls go into the app, and tapping a
-        // text field pops the keyboard up (display IME policy, #15). Tapping
-        // again returns to view-only.
-        // Takeover toggle: as unobtrusive as possible — no text, transparent
-        // fill, only a faint outline ring so it can still be found and tapped.
-        // The ring turns green in control mode so the mode is visible.
-        val takeover = TextView(app).apply {
-            text = ""
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(0x00000000)
-                setStroke((1.5f * d).roundToInt(), 0x33FFFFFF)
-            }
-            layoutParams = FrameLayout.LayoutParams((32f * d).roundToInt(), (32f * d).roundToInt(), Gravity.TOP or Gravity.START).apply {
-                setMargins((6f * d).roundToInt(), (6f * d).roundToInt(), 0, 0)
-            }
-            setOnClickListener { setControlMode(!controlMode) }
-        }
-        contentView.addView(takeover)
-        takeoverButton = takeover
+        rootView.addView(sink)
+        imeSink = sink
         val trigger = TextView(app).apply {
             text = "›"; textSize = 26f; gravity = Gravity.CENTER; setTextColor(0xFFFFFFFF.toInt())
             background = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; setColor(0xCC1F1F1F.toInt()); cornerRadius = 14f * d }
@@ -461,11 +502,86 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         p.y = savedY.coerceIn(0, (screenH - p.height).coerceAtLeast(0))
         updateLayout()
     }
-    private fun goFullscreen() {
-        suppressAutoShow()
-        hide()
-        app.startActivity(Intent(app, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+    // Keyboard bridge (idea borrowed from Eta 3.4.0-beta.30, re-implemented
+    // from the observed behaviour, no Eta code copied). The system keyboard
+    // never appears for the virtual display's fields on its own: the display
+    // IME policy is set (LOCAL in #14/#15, FALLBACK in #17/#19, ime_policy
+    // true in both cases) and the keyboard still never shows, so the bridge
+    // does it instead — a hidden sink EditText on the phone display summons
+    // the phone keyboard, and the typed text is committed to the virtual
+    // display's focused field. The bridge opens automatically when a text
+    // field is focused in control mode (see [checkImeBridge]); there is no
+    // button for it anymore.
+    /** After a gesture in control mode, look for a focused editable field
+     *  on the virtual display; pop the phone keyboard if there is one,
+     *  close it if not. */
+    private fun checkImeBridge() {
+        if (!controlMode || collapsed) { closeImeBridge(); return }
+        imeCheckJob?.cancel()
+        imeCheckJob = scope.launch {
+            delay(300)
+            if (!controlMode || collapsed) { closeImeBridge(); return@launch }
+            val displayId = app.sessions.state.value.displayId ?: run { closeImeBridge(); return@launch }
+            val target = runCatching {
+                ScreenAccessibilityService.current
+                    ?.snapshot(displayId, UUID.randomUUID().toString())
+                    ?.nodes?.firstOrNull { it.editable && it.focused }
+            }.getOrNull()
+            if (target != null) openImeBridge(target.text ?: "") else closeImeBridge()
+        }
+    }
+    private fun openImeBridge(initialText: String) {
+        val sink = imeSink ?: return
+        val p = params ?: return
+        // Pre-fill with the field's current text so typing appends instead
+        // of wiping it; only move the cursor when the text actually changed,
+        // so a mid-typing refresh does not yank it.
+        if (sink.text.toString() != initialText) {
+            sink.setText(initialText)
+            sink.setSelection(initialText.length)
+        }
+        if (imeBridgeOn) return
+        imeBridgeOn = true
+        // Let the overlay take input focus so the sink can hold it.
+        p.flags = p.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+        updateLayout()
+        sink.requestFocus()
+        val imm = app.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager ?: return
+        imeShowJob?.cancel()
+        imeShowJob = scope.launch {
+            for (delayMs in listOf(120L, 480L, 900L, 1400L)) {
+                delay(delayMs)
+                if (!imeBridgeOn) return@launch
+                runCatching { imm.showSoftInput(sink, 0) }
+            }
+        }
+    }
+    private fun closeImeBridge() {
+        if (!imeBridgeOn) return
+        imeBridgeOn = false
+        imeShowJob?.cancel(); imeShowJob = null
+        imeCommitJob?.cancel(); imeCommitJob = null
+        val sink = imeSink
+        val imm = app.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        if (sink != null && imm != null) runCatching { imm.hideSoftInputFromWindow(sink.windowToken, 0) }
+        sink?.clearFocus()
+        sink?.setText("")
+        val p = params
+        if (p != null) {
+            p.flags = p.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            updateLayout()
+        }
+    }
+    /** Commit the sink text now (keyboard Done key) and close the bridge. */
+    private fun commitImeBridge() {
+        val text = imeSink?.text?.toString() ?: ""
+        imeCommitJob?.cancel(); imeCommitJob = null
+        if (text.isEmpty()) { closeImeBridge(); return }
+        scope.launch {
+            runCatching { app.sessions.phoneTakeover(); phoneInput(app, BackendOperation.Text(text, replace = true)) }
+                .onFailure { app.activityLog.runtime("float_viewer", "ime_commit", "failed") }
+            closeImeBridge()
+        }
     }
     private fun isDoubleTap(event: MotionEvent): Boolean {
         val now = SystemClock.uptimeMillis()
@@ -521,16 +637,10 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         return rw to rh
     }
     private fun restoredPosition(w: Int, h: Int): Pair<Int, Int> {
-        // No position memory: always dock to the top-right corner, just below
-        // the status bar, so the window never pops up in the middle of the
-        // screen.
+        // No position memory: always dock flush to the very top-right
+        // corner, so the window never pops up in the middle of the screen.
         val x = (screenW - w - (16f * density).roundToInt()).coerceAtLeast(0)
-        val y = (statusBarHeightPx() + (8f * density).roundToInt()).coerceAtLeast(0)
-        return x to y
-    }
-    private fun statusBarHeightPx(): Int {
-        val id = app.resources.getIdentifier("status_bar_height", "dimen", "android")
-        return if (id > 0) app.resources.getDimensionPixelSize(id) else (24f * density).roundToInt()
+        return x to 0
     }
     /** Only the size is remembered; the position is not. The window always
      *  pops up docked to the top-right corner (see [restoredPosition]), so it
