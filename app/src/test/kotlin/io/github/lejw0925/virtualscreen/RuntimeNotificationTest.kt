@@ -118,9 +118,9 @@ class RuntimeNotificationTest {
         assertFalse(content.working)
         assertEquals(R.drawable.ic_status_remote, notification.smallIcon.resId)
         assertEquals(purpose, notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString())
-        assertEquals(listOf(context.getString(R.string.notification_takeover), context.getString(R.string.notification_close_display)),
+        assertEquals(listOf(context.getString(R.string.notification_takeover), context.getString(R.string.notification_open_on_phone), context.getString(R.string.notification_close_display)),
             notification.actions.map { it.title.toString() })
-        assertEquals(listOf(R.drawable.ic_notification_takeover, R.drawable.ic_notification_close),
+        assertEquals(listOf(R.drawable.ic_notification_takeover, R.drawable.ic_notification_open_on_phone, R.drawable.ic_notification_close),
             notification.actions.map { it.getIcon().resId })
         assertNull(notification.contentView)
         assertNull(notification.bigContentView)
@@ -135,7 +135,7 @@ class RuntimeNotificationTest {
         val notification = RuntimeNotification.build(context, content)
 
         assertTrue(content.controlMode)
-        assertEquals(listOf(context.getString(R.string.notification_view_only), context.getString(R.string.notification_close_display)),
+        assertEquals(listOf(context.getString(R.string.notification_view_only), context.getString(R.string.notification_open_on_phone), context.getString(R.string.notification_close_display)),
             notification.actions.map { it.title.toString() })
     }
 
