@@ -379,6 +379,19 @@ class VirtualScreenSessionManager(
             launchMutex.unlock()
         }
     }
+    /** Launch on the phone's main display, forcing a new task (dual-run). No restart approval; the virtual display is untouched. */
+    suspend fun launchOnPhone(owner: String, token: String, component: String, uri: String? = null): OperationEnvelope {
+        requireLease(owner, token)
+        if (!launchMutex.tryLock()) return OperationEnvelope.failure("APP_LAUNCH_BUSY", state.value.sessionId)
+        try {
+            return mutex.withLock {
+                requireLease(owner, token)
+                backend().launchOnPhone(requireHandle(), component, uri).toEnvelope(state.value.sessionId)
+            }
+        } finally {
+            launchMutex.unlock()
+        }
+    }
     suspend fun observe(owner: String, token: String, captureFrame: Boolean = true): Result<OperationEnvelope> = safeResult {
         mutex.withLock {
             requireLease(owner, token)

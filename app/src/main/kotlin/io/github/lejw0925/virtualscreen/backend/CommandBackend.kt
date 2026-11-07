@@ -47,6 +47,11 @@ abstract class CommandBackend(protected val context: Context) : VirtualScreenBac
             .put("restartApproved", restartApproved).put("ownerPackage", context.packageName))
     }
 
+    override suspend fun launchOnPhone(handle: VirtualScreenHandle, component: String, uri: String?): BackendResult = response {
+        transact(packet(handle, "launch_phone").put("component", component).put("uri", uri.orEmpty())
+            .put("ownerPackage", context.packageName))
+    }
+
     override suspend fun observe(handle: VirtualScreenHandle): Result<ScreenObservation> = result {
         val data = transact(packet(handle, "observe")).checked()
         val bytes = Base64.decode(data.getString("image"), Base64.DEFAULT)

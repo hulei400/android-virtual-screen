@@ -116,7 +116,7 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
         if (action == "probe") return geometry().put("ok", true).put("interactive", power.isInteractive).put("locked", keyguard.isDeviceLocked)
         touched = SystemClock.elapsedRealtime()
         check(allowOff || power.isInteractive && !keyguard.isDeviceLocked) { "SCREEN_OFF_UNAVAILABLE" }
-        if (action !in setOf("launch", "preview")) {
+        if (action !in setOf("launch", "launch_phone", "preview")) {
             val tasks = runningTasks()
             check(tasks.any { taskDisplay(it) == current.display.displayId } ||
                 tasks.none { it.taskId in hostedTasks && taskDisplay(it) != current.display.displayId }) { "APP_MOVED_TO_PHONE" }
@@ -192,6 +192,7 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
             "text" -> ShellTextInput.insert(current.display.displayId, request.getString("value"), request.optBoolean("replace"),
                 context.packageManager.getApplicationInfo(io.github.lejw0925.virtualscreen.BuildConfig.APPLICATION_ID, 0).sourceDir)
             "launch" -> launch(request)
+            "launch_phone" -> launchOnPhone(request)
             else -> error("UNSUPPORTED_OPERATION")
         }
     }
@@ -272,6 +273,38 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
         hostedTasks.addAll(tasks.filter { taskDisplay(it) == displayId }.map { it.taskId })
         rotation?.apply(info.screenOrientation)
         return geometry().put("ok", true).put("component", target.flattenToString()).put("restarted", elsewhere).put("resizeable", resizeable)
+    }
+
+    /**
+     * Start a component on the phone's default display, forcing a new task.
+     * Unlike [launch], there is no elsewhere guard and no force-stop: the
+     * point is to run a second copy of the app on the phone while the
+     * virtual display keeps its own instance (dual-run). A plain launcher
+     * start would reuse the virtual task by affinity and pull it to the
+     * phone; MULTIPLE_TASK forces a new phone task instead. For singleTask
+     * activities the system ignores MULTIPLE_TASK, so the hosted task may
+     * still migrate — [hosted_task_moved] reports that.
+     */
+    private fun launchOnPhone(request: JSONObject): JSONObject {
+        val target = ComponentName.unflattenFromString(request.getString("component")) ?: error("INVALID_COMPONENT")
+        val info = context.packageManager.getActivityInfo(target, 0)
+        require(target.packageName != request.optString("ownerPackage")) { "APP_NOT_LAUNCHABLE" }
+        require(info.enabled) { "APP_NOT_LAUNCHABLE" }
+        val uri = request.optString("uri")
+        require(uri.length <= 8192 && '\u0000' !in uri) { "INVALID_URI" }
+        val phoneDisplay = android.view.Display.DEFAULT_DISPLAY
+        val output = command(listOf("/system/bin/am", "start", "--display", phoneDisplay.toString(), "-f", "0x18800000", "-n", target.flattenToString()) +
+            if (uri.isNotBlank()) listOf("-a", "android.intent.action.VIEW", "-d", uri) else emptyList())
+        check("Error:" !in output && "Activity not started" !in output) { "DISPLAY_LAUNCH_REJECTED" }
+        val allTasks = runningTasks()
+        val phoneTasks = allTasks.filter {
+            it.baseActivity?.packageName == target.packageName || it.topActivity?.packageName == target.packageName
+        }
+        check(phoneTasks.any { taskDisplay(it) == phoneDisplay }) { "PHONE_LAUNCH_MISMATCH" }
+        val hostedMoved = hostedTasks.any { hostedId ->
+            allTasks.any { it.taskId == hostedId && taskDisplay(it) == phoneDisplay }
+        }
+        return ok().put("component", target.flattenToString()).put("display_id", phoneDisplay).put("hosted_task_moved", hostedMoved)
     }
 
     private fun setRotation(rotation: Int) {

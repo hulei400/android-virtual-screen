@@ -350,7 +350,7 @@ private fun capabilityTone(status: CapabilityStatus) = when (status) {
 
 private fun mcpToolIcon(tool: String) = when (tool) {
     "acquire_control", "release_control", "request_control" -> Icons.Default.Security
-    "create_screen", "configure_screen", "close_screen", "launch_app" -> Icons.AutoMirrored.Filled.ScreenShare
+    "create_screen", "configure_screen", "close_screen", "launch_app", "launch_on_phone" -> Icons.AutoMirrored.Filled.ScreenShare
     "observe" -> Icons.Default.CameraAlt
     "tap_at", "long_press_at", "swipe_path", "scroll_at", "input_text", "press_key" -> Icons.Default.TouchApp
     "node_action" -> Icons.Default.AccountTree
@@ -369,6 +369,7 @@ private fun mcpToolLabel(l: UiLanguage,tool: String)=when(tool) {
     "close_screen" -> l.text("关闭虚拟屏","Close display","關閉虛擬螢幕")
     "list_apps" -> l.text("列出应用","List apps","列出應用程式")
     "launch_app" -> l.text("启动应用","Launch app","啟動應用程式")
+    "launch_on_phone" -> l.text("手机屏启动应用","Launch app on phone","在手機螢幕啟動應用程式")
     "observe" -> l.text("观察屏幕","Observe display","觀察螢幕")
     "tap_at" -> l.text("点击","Tap","點按")
     "long_press_at" -> l.text("长按","Long press","長按")
