@@ -114,6 +114,11 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private var imeShowJob: Job? = null
     private var imeCommitJob: Job? = null
     private var imeCheckJob: Job? = null
+    // True while the sink is being set programmatically (pre-fill on open,
+    // clear on close): the TextWatcher must not treat that as user typing
+    // and commit it back to the field. Set/cleared synchronously around
+    // setText, which fires the watcher on the same thread.
+    private var suppressImeCommit = false
     private var params: WindowManager.LayoutParams? = null
     private var chromeTouch = false
     private var stateJob: Job? = null
@@ -413,6 +418,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
                 override fun afterTextChanged(s: Editable?) {
+                    if (suppressImeCommit) return
                     val text = s?.toString() ?: return
                     imeCommitJob?.cancel()
                     imeCommitJob = scope.launch {
@@ -546,9 +552,15 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         val p = params ?: return
         // Pre-fill with the field's current text so typing appends instead
         // of wiping it; only move the cursor when the text actually changed,
-        // so a mid-typing refresh does not yank it.
+        // so a mid-typing refresh does not yank it. The pre-fill is
+        // programmatic, so suppress the commit it would otherwise trigger
+        // (it must not write the field's own text back into the field —
+        // that is what turned Coolapk's hot-word placeholder into real
+        // input on every tap).
         if (sink.text.toString() != initialText) {
+            suppressImeCommit = true
             sink.setText(initialText)
+            suppressImeCommit = false
             sink.setSelection(initialText.length)
         }
         if (imeBridgeOn) return
@@ -576,7 +588,11 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         val imm = app.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
         if (sink != null && imm != null) runCatching { imm.hideSoftInputFromWindow(sink.windowToken, 0) }
         sink?.clearFocus()
+        // Programmatic clear: suppress the commit like the pre-fill, so no
+        // empty write is scheduled as the bridge closes.
+        suppressImeCommit = true
         sink?.setText("")
+        suppressImeCommit = false
         val p = params
         if (p != null) {
             p.flags = p.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
