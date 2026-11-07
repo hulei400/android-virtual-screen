@@ -70,8 +70,18 @@ internal object RuntimeNotification {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
-    fun supportsLiveUpdates(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA &&
-        Build.VERSION.SDK_INT_FULL >= Build.VERSION_CODES_FULL.BAKLAVA_1
+    /**
+     * Android 16 Live Updates (promoted ongoing): ColorOS renders these as
+     * Fluid Cloud capsules, and the same channel works for other vendors'
+     * live-activity capsules. Eta-por gates this on API 36 only
+     * (LIVE_UPDATE_SDK = 36). The previous check also required the full
+     * version BAKLAVA_1 (Android 16 minor release 1, SDK_INT_FULL 3600001),
+     * which kept promotion off on Android 16 base builds such as ColorOS 16
+     * (SDK_INT_FULL is BAKLAVA, 3600000), so the status never reached the
+     * Fluid Cloud. setShortCriticalText / setRequestPromotedOngoing are API 36
+     * methods, so API 36 alone is the correct gate.
+     */
+    fun supportsLiveUpdates(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA
 
     fun describe(context: Context, screen: SessionState, server: McpServerState, activity: ToolActivity?,
                  tunnel: TunnelState, changing: Boolean, controlRequests: List<ControlRequest> = emptyList(),
