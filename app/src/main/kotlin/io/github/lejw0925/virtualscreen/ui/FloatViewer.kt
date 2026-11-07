@@ -267,10 +267,10 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         if (controlMode == on) return
         controlMode = on
         if (!on) liveView?.cancelGesture()
-        takeoverButton?.text = if (on) "只看" else "接管"
         takeoverButton?.background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
-            setColor(if (on) 0xCC1B7A2E.toInt() else 0x80000000.toInt())
+            setColor(0x00000000)
+            setStroke((1.5f * density).roundToInt(), if (on) 0x992E9E44.toInt() else 0x33FFFFFF)
         }
         app.activityLog.runtime("float_viewer", "control_mode", if (on) "on" else "off")
     }
@@ -360,9 +360,16 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         // directly operable — taps and scrolls go into the app, and tapping a
         // text field pops the keyboard up (display IME policy, #15). Tapping
         // again returns to view-only.
+        // Takeover toggle: as unobtrusive as possible — no text, transparent
+        // fill, only a faint outline ring so it can still be found and tapped.
+        // The ring turns green in control mode so the mode is visible.
         val takeover = TextView(app).apply {
-            text = "接管"; textSize = 12f; gravity = Gravity.CENTER; setTextColor(0xFFFFFFFF.toInt())
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x80000000.toInt()) }
+            text = ""
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0x00000000)
+                setStroke((1.5f * d).roundToInt(), 0x33FFFFFF)
+            }
             layoutParams = FrameLayout.LayoutParams((32f * d).roundToInt(), (32f * d).roundToInt(), Gravity.TOP or Gravity.START).apply {
                 setMargins((6f * d).roundToInt(), (6f * d).roundToInt(), 0, 0)
             }

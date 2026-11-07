@@ -11,10 +11,12 @@ import java.util.concurrent.TimeUnit
  * from the observed behaviour, no Eta code copied): let the system keyboard
  * work with the virtual display.
  *
- * Android only shows a soft keyboard on a display whose IME policy allows
- * it, and the default for a freshly created virtual display is not reliable
- * across ROMs. So set it explicitly to LOCAL (1) once, right after the
- * display is created.
+ * The keyboard is set to FALLBACK (0): when a field on the virtual display
+ * is focused, the IME shows on the phone's own display instead of inside
+ * the virtual display's mirror. LOCAL (1) was tried first (#14/#15) but the
+ * keyboard never appeared in the mirror — the mirror does not show the IME
+ * window — so the keyboard now pops up outside the small window, full size,
+ * where the user can actually type on it.
  *
  * Runs in a tiny helper process via app_process — the same route
  * ShellTextInput already uses — because `setDisplayImePolicy` is a hidden
@@ -27,7 +29,7 @@ import java.util.concurrent.TimeUnit
 internal object DisplayImePolicy {
     private const val TAG = "DisplayImePolicy"
     private const val MARKER = "IME_POLICY:"
-    private const val POLICY_LOCAL = 1
+    private const val POLICY_FALLBACK = 0
 
     /** Best-effort: retries once (the display may not be ready yet), returns false instead of throwing. */
     fun apply(displayId: Int, sourceApk: String): Boolean {
@@ -51,7 +53,7 @@ internal object DisplayImePolicy {
             .redirectErrorStream(true).start()
         try {
             process.outputStream.bufferedWriter().use { input ->
-                input.write(JSONObject().put("displayId", displayId).put("policy", POLICY_LOCAL).toString())
+                input.write(JSONObject().put("displayId", displayId).put("policy", POLICY_FALLBACK).toString())
             }
             var result: JSONObject? = null
             process.inputStream.bufferedReader().useLines { lines ->
@@ -74,7 +76,7 @@ internal object DisplayImePolicy {
             val request = JSONObject(bytes.toString(Charsets.UTF_8))
             val displayId = request.getInt("displayId")
             require(displayId > 0) { "INVALID_DISPLAY" }
-            val policy = request.optInt("policy", POLICY_LOCAL)
+            val policy = request.optInt("policy", POLICY_FALLBACK)
             val windowService = Class.forName("android.os.ServiceManager")
                 .getMethod("getService", String::class.java).invoke(null, "window") as IBinder
             val iwm = Class.forName("android.view.IWindowManager\$Stub")
