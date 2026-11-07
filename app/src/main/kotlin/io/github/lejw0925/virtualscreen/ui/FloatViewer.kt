@@ -59,9 +59,8 @@ import kotlin.math.roundToInt
  * No buttons on the window at all (the close and takeover buttons were
  * removed — they got in the way of watching): the window always pops up
  * view-only at the very top-right corner, single-finger drag moves it,
- * dragging either bottom corner resizes it (the zones are invisible now),
- * dragging to a screen edge collapses it to a narrow trigger bar (tap the
- * bar, or drag it outward, to
+ * dragging the bottom edge resizes it, dragging to a screen edge collapses
+ * it to a narrow trigger bar (tap the bar, or drag it outward, to
  * expand back). Double-tap the top-left corner — where the takeover button
  * used to be — toggles control mode: content touches then go straight into
  * the app, same as the fullscreen viewer, and the phone vibrates once to
@@ -92,6 +91,9 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private val minWidthPx get() = (200f * density).roundToInt()
     private val maxWidthPx get() = (screenW - (16f * density).roundToInt()).coerceAtLeast(minWidthPx)
     private val maxHeightPx get() = (screenH - (32f * density).roundToInt()).coerceAtLeast(1)
+    /** Bottom edge resize strip height: the frame below the content. A drag
+     *  starting on this strip resizes the window; it never overlaps the app. */
+    private val resizeEdgePx get() = (20f * density).roundToInt()
     private val edgePx get() = (8f * density).roundToInt()
     private val cornerPx get() = 16f * density
     private var root: FrameLayout? = null
@@ -128,8 +130,8 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private var collapsedDuringDrag = false
     private var savedX = 0; private var savedY = 0; private var savedW = 0; private var savedH = 0
     private var downRawX = 0f; private var downRawY = 0f; private var downWinX = 0; private var downWinY = 0
-    private var downWinW = 0; private var downWinH = 0
-    private var moved = false; private var resizing = false; private var resizeLeft = false
+    private var downWinH = 0
+    private var moved = false; private var resizing = false
     private var triggerDownX = 0f; private var triggerMoved = false
     private val configCallbacks = object : ComponentCallbacks {
         override fun onConfigurationChanged(newConfig: Configuration) {
@@ -152,7 +154,8 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     // The root intercepts every touch except ones starting on the trigger
     // bar, so window gestures always win and content touches never inject —
     // unless control mode is on, in which case content touches go to the app
-    // and only chrome touches and corner resize drags still reach the window.
+    // and only chrome touches and bottom-edge resize drags still reach the
+    // window.
     private fun isOnChrome(event: MotionEvent): Boolean {
         val targets = if (collapsed) listOfNotNull(triggerBar) else emptyList<TextView>()
         return targets.any { view ->
@@ -167,29 +170,28 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             MotionEvent.ACTION_DOWN -> {
                 downRawX = event.rawX; downRawY = event.rawY
                 downWinX = params?.x ?: 0; downWinY = params?.y ?: 0
-                downWinW = params?.width ?: 0; downWinH = params?.height ?: 0
+                downWinH = params?.height ?: 0
                 moved = false
-                val corner = resizeCornerAt(event)
-                resizing = corner != 0; resizeLeft = corner == 2
+                resizing = onResizeEdge(event)
             }
             MotionEvent.ACTION_MOVE -> {
                 if (resizing) {
-                    // Corner drag resizes: width follows the finger, height
-                    // follows the live frame aspect so no black bars appear.
-                    // Right corner: the left edge stays; left corner: the
-                    // right edge stays (width shrinks as the finger moves right).
+                    // Bottom-edge drag resizes: height follows the finger,
+                    // width follows the live frame aspect so no black bars
+                    // appear. The top edge stays; the bottom edge follows
+                    // the finger.
                     val p = params ?: return true
                     val aspect = currentAspect()
-                    val dx = (event.rawX - downRawX).roundToInt()
-                    var w = (if (resizeLeft) downWinW - dx else downWinW + dx).coerceIn(minWidthPx, maxWidthPx)
-                    var h = (w / aspect).roundToInt()
-                    if (h > maxHeightPx) { h = maxHeightPx; w = (h * aspect).roundToInt() }
-                    val x = if (resizeLeft) (downWinX + downWinW - w).coerceIn(0, (screenW - w).coerceAtLeast(0)) else p.x
+                    val dy = (event.rawY - downRawY).roundToInt()
+                    var h = (downWinH + dy).coerceIn(1, maxHeightPx)
+                    var w = (h * aspect).roundToInt()
+                    if (w > maxWidthPx) { w = maxWidthPx; h = (w / aspect).roundToInt() }
+                    if (w < minWidthPx) { w = minWidthPx; h = (w / aspect).roundToInt() }
                     // The height grows down from a fixed y: without this,
                     // growing the window pushes its bottom edge below the
-                    // screen, where the corner zones can't be grabbed anymore.
+                    // screen, where it can't be grabbed anymore.
                     val y = p.y.coerceIn(0, (screenH - h).coerceAtLeast(0))
-                    if (w != p.width || h != p.height || x != p.x || y != p.y) { p.width = w; p.height = h; p.x = x; p.y = y; moved = true; updateLayout() }
+                    if (w != p.width || h != p.height || y != p.y) { p.width = w; p.height = h; p.y = y; moved = true; updateLayout() }
                 } else if (event.pointerCount == 1 && !collapsedDuringDrag) {
                     val dx = (event.rawX - downRawX).roundToInt(); val dy = (event.rawY - downRawY).roundToInt()
                     if (abs(dx) > touchSlopPx || abs(dy) > touchSlopPx) moved = true
@@ -228,17 +230,13 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         }
         return true
     }
-    /** Bottom corner resize zones (about 40dp): a drag starting in either one
-     *  resizes the window instead of moving it. Returns 0 (none), 1 (right),
-     *  or 2 (left). The grip icons are gone; the zones are invisible now. */
-    private fun resizeCornerAt(event: MotionEvent): Int {
-        if (collapsed) return 0
-        val p = params ?: return 0
-        val zone = 40f * density
-        if (event.rawY < p.y + p.height - zone) return 0
-        if (event.rawX >= p.x + p.width - zone) return 1
-        if (event.rawX <= p.x + zone) return 2
-        return 0
+    /** Bottom edge resize strip: a drag starting on the window's bottom edge
+     *  resizes it. The strip is the frame below the content (see the bottom
+     *  margin in [buildViews]), so it never overlaps the app. */
+    private fun onResizeEdge(event: MotionEvent): Boolean {
+        if (collapsed) return false
+        val p = params ?: return false
+        return event.rawY >= p.y + p.height - resizeEdgePx
     }
     private val triggerTouch = View.OnTouchListener { _, event ->
         when (event.actionMasked) {
@@ -341,10 +339,10 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                 if (event.actionMasked == MotionEvent.ACTION_DOWN) {
                     chromeTouch = isOnChrome(event)
                     // Control mode: content touches go to the app; only chrome
-                    // touches and corner resize drags still reach the window.
-                    // The old takeover zone is gone, so the top-left corner is
-                    // ordinary content now.
-                    contentTouch = controlMode && !chromeTouch && resizeCornerAt(event) == 0
+                    // touches and bottom-edge resize drags still reach the
+                    // window. The old takeover zone is gone, so the top-left
+                    // corner is ordinary content now.
+                    contentTouch = controlMode && !chromeTouch && !onResizeEdge(event)
                 }
                 return !chromeTouch && !contentTouch
             }
@@ -361,7 +359,9 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         val inset = (4f * d).roundToInt()
         val contentView = FrameLayout(app).apply {
             layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT).apply {
-                setMargins(inset, inset, inset, inset)
+                // The bottom margin is the resize edge strip: the frame below
+                // the content, where a drag resizes the window.
+                setMargins(inset, inset, inset, resizeEdgePx)
             }
         }
         val viewer = LiveDisplayView(app).apply {
