@@ -164,7 +164,6 @@ open class MainActivity : ComponentActivity() {
     }
     override fun onResume() {
         super.onResume()
-        app.viewerForeground = true
         if(app.mcpWanted && !app.mcp.state().running) { foreground(app); app.restoreMcp() }
         if(launchingPreview && !pip) requestPreviewPictureInPicture()
         if(approvalTarget == null && !pip && !launchingPreview && !previewDismissed && app.sessions.state.value.displayId!=null) {
@@ -195,7 +194,6 @@ open class MainActivity : ComponentActivity() {
         if(hasFocus && !isInPictureInPictureMode && !launchingPreview && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) && app.sessions.state.value.displayId!=null) beginPhoneSession()
     }
     override fun onPause() {
-        app.viewerForeground = false
         super.onPause()
     }
     override fun onUserLeaveHint() {
@@ -350,7 +348,6 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
     val toggleMcp=rememberMcpToggle(app,notifications)
     var view by remember { mutableStateOf<LiveDisplayView?>(null) }; var live by remember { mutableStateOf(false) }
     var expanded by rememberSaveable { mutableStateOf(false) }; var chooseApp by remember { mutableStateOf(false) }; var keyboard by remember { mutableStateOf(false) }
-    var showOverlayPrompt by remember { mutableStateOf(false) }
     var viewerSize by remember { mutableStateOf(IntSize.Zero) }
     var error by remember { mutableStateOf<String?>(null) }; var busy by remember { mutableStateOf(false) }; var applications by remember { mutableStateOf(emptyList<DiscoveredApplication>()) }
     val task: (suspend () -> Unit) -> Unit={ block -> scope.launch { busy=true; try { withContext(Dispatchers.IO) { app.runtimeWork { app.awaitShutdown(); block() } } } catch(c: CancellationException) { throw c } catch(e: Exception) { error=e.code() } finally { busy=false } } }
@@ -426,7 +423,6 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
         }
         if(state.displayId!=null) FloatingControls(state,server.running,expanded,{ expanded=it },tool?.purpose,tool?.phase,live,pip,settings.pipEnabled,settings.viewOnly,
             onToggleViewOnly={ expanded=false; onToggleViewOnly() },
-            onFloat={ expanded=false; if(FloatViewer.canDrawOverlays(app)) app.floatViewer.toggle() else showOverlayPrompt=true },
             onSettings=onSettings,onKeyboard={ expanded=false; keyboard=true },onApps={ task { applications=app.sessions.discoverApplications(includeIcons=true).filter { it.exported && it.packageName!=app.packageName }; chooseApp=true }; expanded=false },
             onPip={ expanded=false; app.floatViewer.hide(); onPip() }, onEnd={
                 val session = state.sessionId ?: return@FloatingControls
@@ -455,12 +451,6 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
         if(error!=null && !pip) androidx.compose.material3.Card(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(20.dp).fillMaxWidth()) {
             Row(Modifier.padding(16.dp),verticalAlignment=Alignment.CenterVertically) { Text(localizedError(l,error!!),modifier=Modifier.weight(1f),style=MaterialTheme.typography.bodyMedium); Action(l.text("关闭","Dismiss","關閉")) { error=null } }
         }
-    }
-    if(showOverlayPrompt) AppDialog(onDismissRequest={ showOverlayPrompt=false }) {
-        Text(l.text("悬浮窗需要权限","Float window needs a permission","懸浮窗需要權限"),style=MaterialTheme.typography.headlineSmall,color=MaterialTheme.colorScheme.onSurface)
-        Text(l.text("请在系统设置里打开“在其他应用的上层显示”，再点一次悬浮窗。","Allow “display over other apps” in system settings, then tap the float window button again.","請在系統設定裡開啟「在其他應用的上層顯示」，再點一次懸浮窗。"),style=MaterialTheme.typography.bodyMedium)
-        Button(onClick={ showOverlayPrompt=false; context.startActivity(FloatViewer.overlayPermissionIntent(app)) }) { Text(l.text("去打开权限","Open settings","去開啟權限")) }
-        TextButton(onClick={ showOverlayPrompt=false }) { Text(l.text("稍后","Later","稍後")) }
     }
     if(chooseApp) AppPicker(applications,onDismiss={ chooseApp=false }) { item -> chooseApp=false; task {
         phoneControl(app) { lease ->
@@ -491,7 +481,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable private fun FloatingControls(state: SessionState,mcpRunning: Boolean,expanded: Boolean,onExpanded: (Boolean) -> Unit,purpose: String?,phase: String?,live: Boolean,pip: Boolean,pipEnabled: Boolean,viewOnly: Boolean = false,
-    onToggleViewOnly: () -> Unit = {},onFloat: () -> Unit = {},
+    onToggleViewOnly: () -> Unit = {},
     onSettings: () -> Unit,onKeyboard: () -> Unit,onApps: () -> Unit,onPip: () -> Unit,onEnd: () -> Unit) {
     val l=LocalLanguage.current; val context=LocalContext.current; val host=LocalView.current
     val prefs=remember { context.getSharedPreferences("viewer_controls",0) }
@@ -602,8 +592,6 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
                                     IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onKeyboard)
                                 if(pipEnabled) floatingAction(Icons.Default.PictureInPicture, l.text("画中画", "PiP", "子母畫面"),
                                     IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onPip)
-                                floatingAction(Icons.Default.OpenInNew, l.text("悬浮窗", "Float window", "懸浮窗"),
-                                    IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onFloat)
                                 floatingAction(if(viewOnly) Icons.Default.VisibilityOff else Icons.Default.Visibility, l.text(if(viewOnly) "只看中" else "只看", if(viewOnly) "View only" else "View only", if(viewOnly) "僅觀看" else "僅觀看"),
                                     IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onToggleViewOnly)
                                 floatingAction(Icons.Default.Settings, l.text("设置", "Settings", "設定"),

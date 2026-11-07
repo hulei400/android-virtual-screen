@@ -145,7 +145,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             }
             MotionEvent.ACTION_POINTER_DOWN -> { scaling = true }
             MotionEvent.ACTION_MOVE -> {
-                if (event.pointerCount == 1 && !scaling) {
+                if (event.pointerCount == 1 && !scaling && !collapsedDuringDrag) {
                     val dx = (event.rawX - downRawX).roundToInt(); val dy = (event.rawY - downRawY).roundToInt()
                     if (abs(dx) > touchSlopPx || abs(dy) > touchSlopPx) moved = true
                     if (moved) {
@@ -162,7 +162,12 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                 if (!moved && !scaling) {
                     if (isDoubleTap(event)) goFullscreen()
                     else { lastTapTime = SystemClock.uptimeMillis(); lastTapX = event.x; lastTapY = event.y }
-                } else if (!snapped) {
+                } else if (snapped) {
+                    // Collapsed mid-drag: glue the bar to the edge at once. It
+                    // used to keep following the finger after collapsing, so it
+                    // sat a few dp off the edge until the 2s sink timer fired.
+                    snapToEdge()
+                } else {
                     val p = params ?: return true
                     if (p.x <= edgePx) collapse(SIDE_LEFT)
                     else if (p.x + p.width >= screenW - edgePx) collapse(SIDE_RIGHT)
@@ -301,6 +306,16 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         if (p.x <= 0) { collapse(SIDE_LEFT); return true }
         if (p.x + p.width >= screenW) { collapse(SIDE_RIGHT); return true }
         return false
+    }
+    /** Pin the collapsed trigger bar flush to its edge right now. After a
+     *  mid-drag collapse the bar used to keep following the finger, so it sat
+     *  a few dp off the edge until the 2s sink timer glued it back. */
+    private fun snapToEdge() {
+        val p = params ?: return
+        if (!collapsed) return
+        p.x = if (collapsedSide == SIDE_LEFT) 0 else screenW - p.width
+        p.y = p.y.coerceIn(0, (screenH - p.height).coerceAtLeast(0))
+        updateLayout()
     }
     private fun collapse(side: Int) {
         val p = params ?: return

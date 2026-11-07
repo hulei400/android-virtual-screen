@@ -1,8 +1,12 @@
 package io.github.lejw0925.virtualscreen
 
+import android.app.Activity
 import android.app.Application
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import io.github.lejw0925.virtualscreen.core.code
 import io.github.lejw0925.virtualscreen.core.ActivityLog
 import io.github.lejw0925.virtualscreen.core.ActivityLogEntry
@@ -109,9 +113,10 @@ class VirtualScreenApplication : Application() {
         private set
     internal val floatViewer by lazy { io.github.lejw0925.virtualscreen.ui.FloatViewer(this) }
 
-    /** True while the fullscreen viewer is what the user is looking at; the
-     *  float window must not pop over it when a display appears. */
-    @Volatile var viewerForeground = false
+    /** The activity currently in front, if any — used to send the fullscreen
+     *  viewer to the background when the float window auto-shows on connect. */
+    @Volatile private var resumedActivity: Activity? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate() {
         super.onCreate()
@@ -130,17 +135,31 @@ class VirtualScreenApplication : Application() {
                 runCatching { sessions.ensureAccessibility() }.onFailure { activityLog.failure("accessibility_enable", it) }
             }
         }
-        // A connection creates the display while the user is elsewhere: pop the
-        // float window by default (PiP is off) so they can watch without opening
-        // the app. Skipped when the fullscreen viewer is already in front, and
-        // when the overlay permission has not been granted yet.
+        // A connection creates the display: pop the float window by default
+        // (PiP is off) so the user can watch without opening the app. If the
+        // fullscreen viewer happens to be in front, send it to the background —
+        // the float window is the default view on connect, not the viewer.
+        // Skipped when the overlay permission has not been granted yet.
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: Activity) { resumedActivity = activity }
+            override fun onActivityPaused(activity: Activity) { if (resumedActivity === activity) resumedActivity = null }
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityStarted(activity: Activity) {}
+            override fun onActivityStopped(activity: Activity) {}
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+            override fun onActivityDestroyed(activity: Activity) {}
+        })
         runtimeScope.launch {
             var lastDisplayId: Int? = null
             sessions.state.collect { s ->
                 val id = s.displayId
-                if (id != null && id != lastDisplayId && !viewerForeground && !floatViewer.isShowing &&
+                if (id != null && id != lastDisplayId && !floatViewer.isShowing &&
                     io.github.lejw0925.virtualscreen.ui.FloatViewer.canDrawOverlays(this@VirtualScreenApplication)) {
                     runCatching { floatViewer.show() }
+                    val activity = resumedActivity
+                    if (activity is io.github.lejw0925.virtualscreen.ui.MainActivity) {
+                        mainHandler.post { runCatching { activity.moveTaskToBack(true) } }
+                    }
                 }
                 lastDisplayId = id
             }
