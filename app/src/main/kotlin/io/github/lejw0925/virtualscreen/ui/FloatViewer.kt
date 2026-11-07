@@ -186,7 +186,12 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                     var h = (w / aspect).roundToInt()
                     if (h > maxHeightPx) { h = maxHeightPx; w = (h * aspect).roundToInt() }
                     val x = if (resizeLeft) (downWinX + downWinW - w).coerceIn(0, (screenW - w).coerceAtLeast(0)) else p.x
-                    if (w != p.width || h != p.height || x != p.x) { p.width = w; p.height = h; p.x = x; moved = true; updateLayout() }
+                    // The height grows down from a fixed y: without this,
+                    // growing the window pushes its bottom edge (and the
+                    // resize grips in it) below the screen, where they
+                    // can't be grabbed anymore.
+                    val y = p.y.coerceIn(0, (screenH - h).coerceAtLeast(0))
+                    if (w != p.width || h != p.height || x != p.x || y != p.y) { p.width = w; p.height = h; p.x = x; p.y = y; moved = true; updateLayout() }
                 } else if (event.pointerCount == 1 && !collapsedDuringDrag) {
                     val dx = (event.rawX - downRawX).roundToInt(); val dy = (event.rawY - downRawY).roundToInt()
                     if (abs(dx) > touchSlopPx || abs(dy) > touchSlopPx) moved = true
@@ -627,6 +632,14 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         if (collapsed) return
         val p = params ?: return
         if (p.width <= 0 || p.height <= 0) return
+        // Keep the whole window on-screen first: a window resized past the
+        // bottom edge used to stay there, because the aspect check below
+        // returned early when the aspect matched — leaving the resize grips
+        // off-screen and ungrabbable. This also pulls a stuck window back
+        // on the next frame after the fix is installed.
+        val nx = p.x.coerceIn(0, (screenW - p.width).coerceAtLeast(0))
+        val ny = p.y.coerceIn(0, (screenH - p.height).coerceAtLeast(0))
+        if (nx != p.x || ny != p.y) { p.x = nx; p.y = ny; updateLayout() }
         val aspect = currentAspect()
         if (aspect <= 0f || !aspect.isFinite()) return
         val winAspect = p.width.toFloat() / p.height
