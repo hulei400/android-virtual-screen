@@ -59,12 +59,12 @@ import kotlin.math.roundToInt
  * view-only at the very top-right corner, single-finger drag moves it,
  * dragging either bottom corner grip resizes it, dragging to a screen edge
  * collapses it to a narrow trigger bar (tap the bar, or drag it outward, to
- * expand back). Double-tap toggles control mode — content touches then go
- * straight into the app, same as the fullscreen viewer — and the phone
- * vibrates once to confirm the switch (one buzz for control on, two for
- * view-only). When a text field is focused in control mode, the phone
- * keyboard pops up outside the window and typing is committed to the field
- * (keyboard bridge, below).
+ * expand back). Double-tap the top-left corner — where the takeover button
+ * used to be — toggles control mode: content touches then go straight into
+ * the app, same as the fullscreen viewer, and the phone vibrates once to
+ * confirm the switch (one buzz for control on, two for view-only). When a
+ * text field is focused in control mode, the phone keyboard pops up outside
+ * the window and typing is committed to the field (keyboard bridge, below).
  *
  * The live SurfaceFlinger mirror serves one viewer at a time: while the float window is
  * shown it holds the mirror and the fullscreen viewer falls back to JPEG frames, then
@@ -153,6 +153,14 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                 event.rawY >= loc[1] && event.rawY < loc[1] + view.height
         }
     }
+    /** The old takeover button's spot (top-left corner, 32dp plus slack):
+     *  double-tap here toggles control mode. Touches here never reach the
+     *  app, so the toggle works in both directions — turning control on
+     *  from view-only, and back off from control mode. */
+    private fun isInTakeoverZone(event: MotionEvent): Boolean {
+        val zone = 48f * density
+        return event.x <= zone && event.y <= zone
+    }
     private fun onWindowTouch(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -195,7 +203,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                     resizing = false
                     saveSize()
                 } else if (!moved) {
-                    if (isDoubleTap(event)) toggleControlMode()
+                    if (isDoubleTap(event) && isInTakeoverZone(event)) toggleControlMode()
                     else { lastTapTime = SystemClock.uptimeMillis(); lastTapX = event.x; lastTapY = event.y }
                 } else if (snapped) {
                     // Collapsed mid-drag: glue the bar to the edge at once. It
@@ -348,9 +356,10 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
                 if (event.actionMasked == MotionEvent.ACTION_DOWN) {
                     chromeTouch = isOnChrome(event)
-                    // Control mode: content touches go to the app; only chrome
-                    // and the resize grips still move/resize the window.
-                    contentTouch = controlMode && !chromeTouch && resizeCornerAt(event) == 0
+                    // Control mode: content touches go to the app; only chrome,
+                    // the resize grips, and the takeover zone still reach the
+                    // window (move/resize, or toggle control mode).
+                    contentTouch = controlMode && !chromeTouch && resizeCornerAt(event) == 0 && !isInTakeoverZone(event)
                 }
                 return !chromeTouch && !contentTouch
             }
