@@ -158,7 +158,6 @@ internal object RuntimeNotification {
         drawable.draw(canvas)
         bitmap
     }.getOrNull()
-    }
 
     @SuppressLint("NewApi")
     fun build(context: Context, content: RuntimeNotificationContent, dismissedSession: String? = null): Notification {
