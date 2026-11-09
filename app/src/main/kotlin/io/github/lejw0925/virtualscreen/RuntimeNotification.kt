@@ -11,6 +11,7 @@ import androidx.annotation.DrawableRes
 import androidx.core.net.toUri
 import io.github.lejw0925.virtualscreen.core.AppRestartRequest
 import io.github.lejw0925.virtualscreen.core.ControlRequest
+import io.github.lejw0925.virtualscreen.core.CurrentApp
 import io.github.lejw0925.virtualscreen.core.PreviewStatus
 import io.github.lejw0925.virtualscreen.core.SessionState
 import io.github.lejw0925.virtualscreen.core.SessionStatus
@@ -19,6 +20,7 @@ import io.github.lejw0925.virtualscreen.ui.MainActivity
 import io.github.lejw0925.virtualscreen.mcp.McpServerState
 import io.github.lejw0925.virtualscreen.mcp.ToolActivity
 import io.github.lejw0925.virtualscreen.tunnel.TunnelState
+import kotlin.math.roundToInt
 
 internal data class RuntimeNotificationContent(
     val title: String,
@@ -32,6 +34,10 @@ internal data class RuntimeNotificationContent(
     /** True while the float window is in control mode; the notification's
      *  first action then offers 只看 instead of 接管. */
     val controlMode: Boolean = false,
+    /** Label of the app currently on top of the virtual display, if any. */
+    val currentApp: String? = null,
+    /** The current app's icon, shown as the notification's large icon. */
+    val appIcon: android.graphics.Bitmap? = null,
 )
 
 internal enum class NotificationApprovalKind { CONTROL, APP_RESTART }
@@ -89,7 +95,7 @@ internal object RuntimeNotification {
     fun describe(context: Context, screen: SessionState, server: McpServerState, activity: ToolActivity?,
                  tunnel: TunnelState, changing: Boolean, controlRequests: List<ControlRequest> = emptyList(),
                  restartRequests: List<AppRestartRequest> = emptyList(),
-                 controlMode: Boolean = false): RuntimeNotificationContent {
+                 controlMode: Boolean = false, currentApp: CurrentApp? = null): RuntimeNotificationContent {
         val approval = restartRequests.firstOrNull()?.let { NotificationApproval.restart(context, it) }
             ?: controlRequests.firstOrNull()?.let { NotificationApproval.control(context, it) }
         val remote = screen.lease.let { it != null && it.owner != VirtualScreenSessionManager.PHONE_CLIENT }
@@ -108,18 +114,20 @@ internal object RuntimeNotification {
             else -> R.string.notification_running
         }
         val chip = when {
-            approval != null -> R.string.notification_chip_approval
-            error -> R.string.notification_chip_error
-            working -> R.string.notification_chip_active
-            remote && screen.displayId != null -> R.string.notification_chip_remote
-            screen.displayId != null -> R.string.notification_chip_local
-            else -> R.string.notification_chip_ready
+            approval != null -> context.getString(R.string.notification_chip_approval)
+            error -> context.getString(R.string.notification_chip_error)
+            working -> context.getString(R.string.notification_chip_active)
+            screen.displayId != null && currentApp != null -> currentApp.label
+            remote && screen.displayId != null -> context.getString(R.string.notification_chip_remote)
+            screen.displayId != null -> context.getString(R.string.notification_chip_local)
+            else -> context.getString(R.string.notification_chip_ready)
         }
         val detail = when {
             approval != null -> approval.detail
             error -> context.getString(R.string.notification_failure)
             currentActivity?.purpose?.isNotBlank() == true && screen.displayId != null -> currentActivity.purpose
             screen.previewStatus == PreviewStatus.UNAVAILABLE -> context.getString(R.string.notification_preview_unavailable)
+            screen.displayId != null && currentApp != null -> context.getString(R.string.notification_current_app, currentApp.label)
             screen.displayId != null -> context.getString(R.string.notification_isolated)
             changing || screen.status == SessionStatus.STARTING -> context.getString(R.string.notification_starting_detail)
             server.running && server.sessionCount > 0 -> context.getString(R.string.notification_clients, server.sessionCount)
@@ -133,9 +141,23 @@ internal object RuntimeNotification {
             remote && screen.displayId != null -> R.drawable.ic_status_remote
             else -> R.drawable.ic_status_ready
         }
-        return RuntimeNotificationContent(approval?.title ?: context.getString(title), detail, context.getString(chip), working,
+        return RuntimeNotificationContent(approval?.title ?: context.getString(title), detail, chip, working,
             screen.sessionId.takeIf { screen.displayId != null && screen.status == SessionStatus.RUNNING },
-            icon, screen.sessionId.takeIf { screen.displayId != null }, approval, controlMode)
+            icon, screen.sessionId.takeIf { screen.displayId != null }, approval, controlMode,
+            currentApp?.label, currentApp?.let { appIconBitmap(context, it.packageName) })
+    }
+
+    /** The app's launcher icon as a bitmap, for the notification's large icon.
+     *  Null when the package is unknown — the card then shows no large icon. */
+    private fun appIconBitmap(context: Context, packageName: String): android.graphics.Bitmap? = runCatching {
+        val drawable = context.packageManager.getApplicationIcon(packageName)
+        val size = (48 * context.resources.displayMetrics.density).roundToInt().coerceAtLeast(1)
+        val bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        drawable.setBounds(0, 0, size, size)
+        drawable.draw(canvas)
+        bitmap
+    }.getOrNull()
     }
 
     @SuppressLint("NewApi")
@@ -155,6 +177,10 @@ internal object RuntimeNotification {
             .setContentIntent(open).setOnlyAlertOnce(true).setShowWhen(false).setOngoing(true)
             .setCategory(Notification.CATEGORY_PROGRESS).setVisibility(Notification.VISIBILITY_PRIVATE)
             .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+        // The current app's icon, full colour, in the pulled-down card.
+        // (The status-bar capsule only takes the small monochrome icon, so
+        // the app icon cannot show there in colour.)
+        if (content.appIcon != null) builder.setLargeIcon(content.appIcon)
         when {
             content.approval != null -> approvalActions(context, content.approval).forEach(builder::addAction)
             content.displaySession != null -> {

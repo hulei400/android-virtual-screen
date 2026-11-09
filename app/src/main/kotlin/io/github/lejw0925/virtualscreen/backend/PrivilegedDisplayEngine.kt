@@ -116,7 +116,7 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
         if (action == "probe") return geometry().put("ok", true).put("interactive", power.isInteractive).put("locked", keyguard.isDeviceLocked)
         touched = SystemClock.elapsedRealtime()
         check(allowOff || power.isInteractive && !keyguard.isDeviceLocked) { "SCREEN_OFF_UNAVAILABLE" }
-        if (action !in setOf("launch", "launch_phone", "phone_open_current", "run_shell", "preview")) {
+        if (action !in setOf("launch", "launch_phone", "phone_open_current", "run_shell", "preview", "current_app")) {
             val tasks = runningTasks()
             check(tasks.any { taskDisplay(it) == current.display.displayId } ||
                 tasks.none { it.taskId in hostedTasks && taskDisplay(it) != current.display.displayId }) { "APP_MOVED_TO_PHONE" }
@@ -195,6 +195,7 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
             "launch_phone" -> launchOnPhone(request)
             "phone_open_current" -> phoneOpenCurrent(request)
             "run_shell" -> runShell(request)
+            "current_app" -> currentApp(request)
             else -> error("UNSUPPORTED_OPERATION")
         }
     }
@@ -301,13 +302,31 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
      *  display on the phone's main display, as a second task. The component
      *  is resolved here (the phone side has no component to pass in). */
     private fun phoneOpenCurrent(request: JSONObject): JSONObject {
+        val target = currentTopActivity()
+        require(target.packageName != io.github.lejw0925.virtualscreen.BuildConfig.APPLICATION_ID) { "APP_NOT_LAUNCHABLE" }
+        return startOnPhone(target, "")
+    }
+
+    /** The component on top of the virtual display: a hosted task first,
+     *  otherwise any task on the display with activities. */
+    private fun currentTopActivity(): android.content.ComponentName {
         val displayId = display?.display?.displayId ?: error("DISPLAY_GONE")
         val current = runningTasks().firstOrNull { taskDisplay(it) == displayId && it.taskId in hostedTasks }
             ?: runningTasks().firstOrNull { taskDisplay(it) == displayId && it.numActivities > 0 }
             ?: error("NO_RUNNING_APP")
-        val target = current.topActivity ?: current.baseActivity ?: error("NO_RUNNING_APP")
-        require(target.packageName != io.github.lejw0925.virtualscreen.BuildConfig.APPLICATION_ID) { "APP_NOT_LAUNCHABLE" }
-        return startOnPhone(target, "")
+        return current.topActivity ?: current.baseActivity ?: error("NO_RUNNING_APP")
+    }
+
+    /** Read-only: the app currently on top of the virtual display, for the
+     *  Fluid Cloud card. Returns its package name and display label. */
+    private fun currentApp(request: JSONObject): JSONObject {
+        val target = currentTopActivity()
+        val label = runCatching {
+            context.packageManager.getApplicationLabel(
+                context.packageManager.getApplicationInfo(target.packageName, 0)).toString()
+        }.getOrNull() ?: target.packageName
+        return ok().put("package_name", target.packageName).put("app_label", label)
+            .put("activity", target.shortClassName)
     }
 
     /** Run an arbitrary shell command on the phone (root) and return its

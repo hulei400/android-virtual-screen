@@ -13,6 +13,7 @@
     <string name="notification_local">Local preview</string>
     <string name="notification_error">Check permissions</string>
     <string name="notification_isolated">Your phone stays yours · Tap to take over</string>
+    <string name="notification_current_app">Current app: %1$s</string>
     <string name="notification_waiting">Waiting for an isolated display</string>
     <string name="notification_preview_unavailable">PiP is unavailable · Tap this notification to view the display</string>
     <string name="control_approval_channel">Control approvals</string>

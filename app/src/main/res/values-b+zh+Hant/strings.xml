@@ -12,6 +12,7 @@
     <string name="notification_local">本機預覽</string>
     <string name="notification_error">請檢查權限</string>
     <string name="notification_isolated">獨立執行，不打擾主螢幕 · 可隨時接管</string>
+    <string name="notification_current_app">目前應用：%1$s</string>
     <string name="notification_waiting">等待建立獨立螢幕</string>
     <string name="notification_preview_unavailable">子母畫面不可用 · 點按通知查看虛擬螢幕</string>
     <string name="control_approval_channel">控制權審批</string>

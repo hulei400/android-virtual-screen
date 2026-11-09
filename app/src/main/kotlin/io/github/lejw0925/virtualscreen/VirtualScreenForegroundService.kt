@@ -40,6 +40,9 @@ class VirtualScreenForegroundService : Service() {
         private const val ID = 8732
     }
     private val dismissedLiveSession = MutableStateFlow<String?>(null)
+    /** The app currently on top of the virtual display, polled while a
+     *  display is running; feeds the Fluid Cloud card. */
+    private val currentApp = MutableStateFlow<io.github.lejw0925.virtualscreen.core.CurrentApp?>(null)
     private val app get() = application as VirtualScreenApplication
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var wakeLock: PowerManager.WakeLock? = null
@@ -98,13 +101,29 @@ class VirtualScreenForegroundService : Service() {
                 Triple(server to activity, tunnel, changing)
             }
             combine(app.sessions.state, runtime, app.mcp.approvals.pending, app.sessions.restartApprovals.pending,
-                app.floatViewer.controlModeFlow) { screen, status, control, restart, controlMode ->
+                app.floatViewer.controlModeFlow, currentApp) { screen, status, control, restart, controlMode, app ->
                 RuntimeNotification.describe(this@VirtualScreenForegroundService, screen, status.first.first, status.first.second,
-                    status.second, status.third, control, restart, controlMode)
+                    status.second, status.third, control, restart, controlMode, app)
             }.combine(dismissedLiveSession) { content, dismissed -> content to dismissed.takeIf { it == content.liveSession } }
                 .distinctUntilChanged().collect { (content, dismissed) ->
                     manager.notify(ID, RuntimeNotification.build(this@VirtualScreenForegroundService, content, dismissed))
                 }
+        }
+        // Poll the virtual display's top app while it runs; the card only
+        // refreshes when the label actually changes (distinctUntilChanged
+        // above), so this stays cheap. No push exists for user-driven app
+        // switches inside the display, hence the poll.
+        scope.launch {
+            while (true) {
+                val running = app.sessions.state.value.status == SessionStatus.RUNNING
+                    && app.sessions.state.value.displayId != null
+                currentApp.value = if (running) {
+                    runCatching { app.sessions.currentApp() }.getOrNull()
+                } else {
+                    null
+                }
+                delay(3_000)
+            }
         }
         scope.launch {
             app.sessions.state.map { state ->

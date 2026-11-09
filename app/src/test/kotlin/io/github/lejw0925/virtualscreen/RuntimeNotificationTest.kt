@@ -5,6 +5,7 @@ import android.app.Notification
 import android.os.Build
 import io.github.lejw0925.virtualscreen.core.AppRestartRequest
 import io.github.lejw0925.virtualscreen.core.ControlRequest
+import io.github.lejw0925.virtualscreen.core.CurrentApp
 import io.github.lejw0925.virtualscreen.core.Lease
 import io.github.lejw0925.virtualscreen.core.PreviewStatus
 import io.github.lejw0925.virtualscreen.core.SessionState
@@ -59,6 +60,43 @@ class RuntimeNotificationTest {
         assertTrue(notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT) != null)
         assertEquals(R.drawable.ic_status_ready, notification.smallIcon.resId)
         if (Build.VERSION.SDK_INT >= 36 && RuntimeNotification.supportsLiveUpdates()) assertEquals(content.chip, notification.shortCriticalText)
+    }
+
+    @Test fun currentAppShowsInDetailAndChipWhenDisplayRuns() {
+        val content = RuntimeNotification.describe(context,
+            SessionState(status = SessionStatus.RUNNING, sessionId = "screen-1", displayId = 8),
+            McpServerState(running = true), null, TunnelState(), changing = false,
+            currentApp = CurrentApp("酷安", "com.coolapk.market"))
+
+        assertEquals(context.getString(R.string.notification_current_app, "酷安"), content.detail)
+        assertEquals("酷安", content.chip)
+        assertEquals("酷安", content.currentApp)
+        // com.coolapk.market is not installed in the test env, so no icon.
+        assertNull(content.appIcon)
+    }
+
+    @Test fun currentAppIconResolvesForAnInstalledPackage() {
+        val content = RuntimeNotification.describe(context,
+            SessionState(status = SessionStatus.RUNNING, sessionId = "screen-1", displayId = 8),
+            McpServerState(running = true), null, TunnelState(), changing = false,
+            currentApp = CurrentApp("Virtual Screen", context.packageName))
+
+        assertEquals(context.getString(R.string.notification_current_app, "Virtual Screen"), content.detail)
+        assertTrue(content.appIcon != null)
+        val notification = RuntimeNotification.build(context, content)
+        assertTrue(notification.getLargeIcon() != null)
+    }
+
+    @Test fun runningTaskPurposeStillBeatsCurrentApp() {
+        val activity = ToolActivity("activity", "agent", "tap", "Open the requested screen", "running")
+        val content = RuntimeNotification.describe(context,
+            SessionState(status = SessionStatus.RUNNING, sessionId = "screen-1", displayId = 8,
+                lease = Lease("agent", "private-token", Long.MAX_VALUE, 1)),
+            McpServerState(running = true), activity, TunnelState(), changing = false,
+            currentApp = CurrentApp("酷安", "com.coolapk.market"))
+
+        assertEquals("Open the requested screen", content.detail)
+        assertEquals(context.getString(R.string.notification_chip_active), content.chip)
     }
 
     @Test fun remoteAgentActivityChangesTheStatusChipToActive() {

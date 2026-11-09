@@ -25,6 +25,8 @@ import kotlinx.coroutines.withContext
 
 enum class SessionStatus { STOPPED, STARTING, RUNNING, ERROR }
 enum class PreviewStatus { HIDDEN, REQUESTED, VISIBLE, UNAVAILABLE }
+/** The app currently on top of the virtual display, for the Fluid Cloud card. */
+data class CurrentApp(val label: String, val packageName: String)
 data class SessionState(
     val backend: BackendKind = BackendKind.ROOT,
     val capabilities: BackendCapabilities = BackendCapabilities(),
@@ -405,6 +407,18 @@ class VirtualScreenSessionManager(
             return@withLock OperationEnvelope.failure("STALE_VIRTUAL_SCREEN", state.value.sessionId)
         }
         backend().phoneOpenCurrent(requireHandle()).toEnvelope(state.value.sessionId)
+    }
+    /** Phone-side read-only query for the Fluid Cloud card: the app currently
+     *  on top of the virtual display, or null when there is no display or no
+     *  app. No lease required — the foreground service polls it. */
+    suspend fun currentApp(): CurrentApp? = mutex.withLock {
+        val handle = handle ?: return@withLock null
+        if (state.value.displayId == null) return@withLock null
+        val result = runCatching { backend().currentApp(handle) }.getOrNull() ?: return@withLock null
+        if (!result.ok) return@withLock null
+        val label = result.values["app_label"] as? String ?: return@withLock null
+        val packageName = result.values["package_name"] as? String ?: return@withLock null
+        CurrentApp(label, packageName)
     }
     suspend fun observe(owner: String, token: String, captureFrame: Boolean = true): Result<OperationEnvelope> = safeResult {
         mutex.withLock {
