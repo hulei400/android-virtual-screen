@@ -5,6 +5,7 @@
     <string name="notification_running">虛擬螢幕服務已啟用</string>
     <string name="notification_takeover">人工接管</string>
     <string name="notification_open_on_phone">在主螢幕開啟</string>
+    <string name="notification_no_running_app">虛擬螢幕上沒有正在運行的應用</string>
     <string name="notification_stop">停止</string>
     <string name="notification_ready">等待 Agent</string>
     <string name="notification_working">Agent 正在操作</string>

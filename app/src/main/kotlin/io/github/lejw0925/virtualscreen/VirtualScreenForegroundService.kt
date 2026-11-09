@@ -274,10 +274,27 @@ class VirtualScreenForegroundService : Service() {
                 // Fluid Cloud button: open the virtual display's current
                 // app on the phone's main display, as a second task. This
                 // does not touch the virtual display, so no takeover.
+                // When no app is running on the virtual display (e.g. a
+                // headless command-only session), the backend reports
+                // NO_RUNNING_APP as a failed envelope, not an exception:
+                // tell the user with a toast instead of failing silently.
                 val session = intent.getStringExtra(RuntimeNotification.EXTRA_SESSION)!!
                 scope.launch {
                     app.runtimeWork {
                         runCatching { app.sessions.phoneOpenCurrent(session) }
+                            .onSuccess { envelope ->
+                                if (!envelope.ok && envelope.code == "NO_RUNNING_APP") {
+                                    // Toast needs the main thread; this
+                                    // handler runs on Dispatchers.IO.
+                                    withContext(Dispatchers.Main) {
+                                        android.widget.Toast.makeText(
+                                            app,
+                                            app.getString(R.string.notification_no_running_app),
+                                            android.widget.Toast.LENGTH_SHORT,
+                                        ).show()
+                                    }
+                                }
+                            }
                             .onFailure { app.activityLog.failure("notification_open_on_phone", it) }
                     }
                 }
