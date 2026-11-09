@@ -86,7 +86,15 @@ class RootBackend(context: Context) : CommandBackend(context) {
         // Keep the transport ordered without destroying its Root display.
         val exchange = exchanges.async {
             val p = process ?: error("DISPLAY_GONE")
-            val timeout = deadlines.schedule({ p.destroyForcibly() }, 15, TimeUnit.SECONDS)
+            // A shell command legitimately runs up to its own timeout_ms
+            // (the MCP tool caps it at 120s); the fixed 15s deadline would
+            // kill the whole backend process for any command longer than
+            // 15s. Give run_shell its own timeout plus a buffer for IPC
+            // overhead; every other action keeps the 15s deadline.
+            val deadlineMs = if (request.optString("action") == "run_shell") {
+                (request.optInt("timeout_ms", 30000) + 5000).coerceIn(15000, 130000).toLong()
+            } else 15000L
+            val timeout = deadlines.schedule({ p.destroyForcibly() }, deadlineMs, TimeUnit.MILLISECONDS)
             try {
                 synchronized(writeLock) { val w = input ?: error("DISPLAY_GONE"); w.write(request.toString()); w.newLine(); w.flush() }
                 val reader = output ?: error("DISPLAY_GONE")
