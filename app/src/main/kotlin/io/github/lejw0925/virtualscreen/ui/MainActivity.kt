@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -507,7 +508,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
     BoxWithConstraints(Modifier.fillMaxSize().imePadding()) {
         val density=LocalDensity.current
         val w=with(density) { maxWidth.toPx() }; val h=with(density) { maxHeight.toPx() }
-        val targetControlWidth=if(pip) maxOf(0.dp,minOf(maxWidth-20.dp,300.dp)) else if(hidden) 44.dp else minOf(maxWidth-24.dp,if(expanded) 320.dp else 284.dp)
+        val targetControlWidth=if(pip) maxOf(0.dp,minOf(maxWidth-20.dp,300.dp)) else if(hidden) 120.dp else minOf(maxWidth-24.dp,if(expanded) 320.dp else 284.dp)
         val animatedControlWidth by animateDpAsState(
             targetValue=targetControlWidth,
             animationSpec=spring(dampingRatio=.78f,stiffness=Spring.StiffnessMediumLow),
@@ -562,16 +563,29 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
                 },
                 label="floating control fold"
             ) { folded ->
-                if(folded) Box(Modifier.then(dragModifier).size(48.dp)) {
-                    FilledTonalIconButton(
-                        onClick={ hidden=false },
-                        shapes=IconButtonShapes(MaterialTheme.shapes.large,MaterialTheme.shapes.medium),
-                        modifier=Modifier.fillMaxSize().semantics { contentDescription=status }
+                if(folded) Box(Modifier.then(dragModifier).height(32.dp)) {
+                    // Collapsed form is a thin horizontal bar (status dot +
+                    // short status), not the old 48dp round button: tap it to
+                    // bring the card back, drag it to move it.
+                    Surface(
+                        modifier=Modifier.fillMaxSize().semantics { contentDescription=status },
+                        shape=RoundedCornerShape(50),
+                        color=MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha=.94f),
+                        tonalElevation=3.dp,
+                        shadowElevation=3.dp,
+                        onClick={ hidden=false }
                     ) {
-                        StatusIndicator(running,accent,Modifier.size(22.dp))
+                        Row(Modifier.padding(horizontal=10.dp),verticalAlignment=Alignment.CenterVertically) {
+                            StatusIndicator(running,accent,Modifier.size(11.dp))
+                            Spacer(Modifier.width(7.dp))
+                            Text(status,style=MaterialTheme.typography.labelSmall,maxLines=1,softWrap=false,overflow=TextOverflow.Ellipsis,color=MaterialTheme.colorScheme.onSurface)
+                        }
                     }
                 } else androidx.compose.material3.Card(Modifier.padding(horizontal=8.dp).shadow(8.dp,MaterialTheme.shapes.largeIncreased),shape=MaterialTheme.shapes.largeIncreased) { Column(Modifier.padding(horizontal=12.dp,vertical=6.dp)) {
-                    Row(Modifier.fillMaxWidth().then(dragModifier),verticalAlignment=Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().then(dragModifier).clickable(
+                        indication=null,
+                        interactionSource=remember { MutableInteractionSource() }
+                    ) { onExpanded(false); hidden=true },verticalAlignment=Alignment.CenterVertically) {
                         StatusIndicator(running,accent,Modifier.size(16.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(if(!expanded && running && !purpose.isNullOrBlank()) purpose else status,modifier=Modifier.weight(1f),style=MaterialTheme.typography.bodyMedium,maxLines=if(expanded) 1 else 2,overflow=TextOverflow.Ellipsis,color=MaterialTheme.colorScheme.onSurface)
