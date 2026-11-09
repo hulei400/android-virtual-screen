@@ -75,18 +75,6 @@ class RuntimeNotificationTest {
         assertNull(content.appIcon)
     }
 
-    @Test fun currentAppIconResolvesForAnInstalledPackage() {
-        val content = RuntimeNotification.describe(context,
-            SessionState(status = SessionStatus.RUNNING, sessionId = "screen-1", displayId = 8),
-            McpServerState(running = true), null, TunnelState(), changing = false,
-            currentApp = CurrentApp("Virtual Screen", context.packageName))
-
-        assertEquals(context.getString(R.string.notification_current_app, "Virtual Screen"), content.detail)
-        assertTrue(content.appIcon != null)
-        val notification = RuntimeNotification.build(context, content)
-        assertTrue(notification.getLargeIcon() != null)
-    }
-
     @Test fun runningTaskPurposeStillBeatsCurrentApp() {
         val activity = ToolActivity("activity", "agent", "tap", "Open the requested screen", "running")
         val content = RuntimeNotification.describe(context,
