@@ -222,7 +222,7 @@ class McpToolsTest {
         val registry=McpToolRegistry(sessions)
         val lease=(sessions.acquireLease("test") as LeaseDecision.Granted).lease
         sessions.create("test",lease.token)
-        fun touch(action: String,x: Int = 10,y: Int = 20) = registry.call("touch",
+        suspend fun touch(action: String,x: Int = 10,y: Int = 20) = registry.call("touch",
             JSONObject().put("purpose","Hold then drag").put("lease_token",lease.token)
                 .put("action",action).put("x",x).put("y",y).put("observe_after","none"),"test")
             .getJSONObject("structuredContent")
