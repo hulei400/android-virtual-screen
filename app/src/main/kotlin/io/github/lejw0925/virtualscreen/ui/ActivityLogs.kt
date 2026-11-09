@@ -104,7 +104,7 @@ private fun LogPanel(log: ActivityLog, modifier: Modifier = Modifier, detailed: 
     var category by remember { mutableIntStateOf(0) }
     var confirmClear by remember { mutableStateOf(false) }
     val source = if (paused) frozen else entries
-    val categories = listOf(null, "runtime", "mcp", "tunnel", "shell")
+    val categories = listOf(null, "shell", "runtime", "mcp", "tunnel")
     val visible = remember(source, severity, category) { source.filter {
         (severity == LogSeverity.ALL || logSeverity(it) == severity) &&
             (categories[category] == null || it.category == categories[category])
@@ -159,7 +159,7 @@ private fun LogPanel(log: ActivityLog, modifier: Modifier = Modifier, detailed: 
                 }
             }
             if (detailed) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(l.text("所有来源", "All sources", "所有來源"), l.text("软件", "App", "軟體"), "MCP", l.text("隧道", "Tunnels", "通道"), l.text("命令", "Shell", "命令")).forEachIndexed { index, label ->
+                listOf(l.text("所有来源", "All sources", "所有來源"), l.text("命令", "Shell", "命令"), l.text("软件", "App", "軟體"), "MCP", l.text("隧道", "Tunnels", "通道")).forEachIndexed { index, label ->
                     FilterChip(selected = category == index, onClick = { category = index }, label = { Text(label) })
                 }
             }
@@ -262,7 +262,7 @@ private fun LogEntryCard(entry: ActivityLogEntry, time: DateTimeFormatter, surfa
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(entry.operation, style = MaterialTheme.typography.titleSmallEmphasized,
-                        color = colors.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        color = colors.onSurface)
                     Text(time.format(Instant.ofEpochMilli(entry.time)),
                         style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace,
                         color = colors.onSurfaceVariant)

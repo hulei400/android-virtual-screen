@@ -13,7 +13,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloat
@@ -24,8 +23,6 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -43,7 +40,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
@@ -85,7 +81,6 @@ import io.github.lejw0925.virtualscreen.VirtualScreenForegroundService
 import io.github.lejw0925.virtualscreen.backend.*
 import io.github.lejw0925.virtualscreen.core.*
 import kotlinx.coroutines.*
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -353,7 +348,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
     val context = LocalContext.current
     val toggleMcp=rememberMcpToggle(app,notifications)
     var view by remember { mutableStateOf<LiveDisplayView?>(null) }; var live by remember { mutableStateOf(false) }
-    var expanded by rememberSaveable { mutableStateOf(false) }; var chooseApp by remember { mutableStateOf(false) }; var keyboard by remember { mutableStateOf(false) }
+    var chooseApp by remember { mutableStateOf(false) }; var keyboard by remember { mutableStateOf(false) }
     var viewerSize by remember { mutableStateOf(IntSize.Zero) }
     var error by remember { mutableStateOf<String?>(null) }; var busy by remember { mutableStateOf(false) }; var applications by remember { mutableStateOf(emptyList<DiscoveredApplication>()) }
     val task: (suspend () -> Unit) -> Unit={ block -> scope.launch { busy=true; try { withContext(Dispatchers.IO) { app.runtimeWork { app.awaitShutdown(); block() } } } catch(c: CancellationException) { throw c } catch(e: Exception) { error=e.code() } finally { busy=false } } }
@@ -378,10 +373,10 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
             finally { view?.setResumed(false) }
         }
     }
-    BackHandler(state.displayId!=null || expanded || keyboard) {
+    BackHandler(state.displayId!=null || keyboard) {
         // In view-only mode Back only leaves the fullscreen viewer; it must not
         // inject Back into the virtual display, and must not turn the setting off.
-        when { keyboard -> keyboard=false; expanded -> expanded=false; settings.viewOnly -> if(settings.pipEnabled) onPip() else (context as? Activity)?.finish(); else -> localInput(BackendOperation.Back) }
+        when { keyboard -> keyboard=false; settings.viewOnly -> if(settings.pipEnabled) onPip() else (context as? Activity)?.finish(); else -> localInput(BackendOperation.Back) }
     }
     val imeVisible=WindowInsets.ime.getBottom(LocalDensity.current)>0
     val background=if(state.displayId!=null) Color.Black else MaterialTheme.colorScheme.background
@@ -427,12 +422,12 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
                 error = (server.lastError ?: state.errorCode)?.let { localizedError(l, it) },
             )
         }
-        if(state.displayId!=null) FloatingControls(state,server.running,expanded,{ expanded=it },tool?.purpose,tool?.phase,live,pip,settings.pipEnabled,settings.viewOnly,
-            onToggleViewOnly={ expanded=false; onToggleViewOnly() },
-            onSettings=onSettings,onKeyboard={ expanded=false; keyboard=true },onApps={ task { applications=app.sessions.discoverApplications(includeIcons=true).filter { it.exported && it.packageName!=app.packageName }; chooseApp=true }; expanded=false },
-            onPip={ expanded=false; app.floatViewer.hide(); onPip() }, onEnd={
+        if(state.displayId!=null) FloatingControls(state,server.running,tool?.purpose,tool?.phase,live,pip,settings.pipEnabled,settings.viewOnly,
+            onToggleViewOnly={ onToggleViewOnly() },
+            onSettings=onSettings,onKeyboard={ keyboard=true },onApps={ task { applications=app.sessions.discoverApplications(includeIcons=true).filter { it.exported && it.packageName!=app.packageName }; chooseApp=true } },
+            onPip={ app.floatViewer.hide(); onPip() }, onEnd={
                 val session = state.sessionId ?: return@FloatingControls
-                expanded=false; keyboard=false; chooseApp=false; error=null
+                keyboard=false; chooseApp=false; error=null
                 task {
                     app.sessions.closeFromPhone(session)
                     withContext(Dispatchers.Main) {
@@ -486,7 +481,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
 }
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3ExpressiveApi::class)
-@Composable private fun FloatingControls(state: SessionState,mcpRunning: Boolean,expanded: Boolean,onExpanded: (Boolean) -> Unit,purpose: String?,phase: String?,live: Boolean,pip: Boolean,pipEnabled: Boolean,viewOnly: Boolean = false,
+@Composable private fun FloatingControls(state: SessionState,mcpRunning: Boolean,purpose: String?,phase: String?,live: Boolean,pip: Boolean,pipEnabled: Boolean,viewOnly: Boolean = false,
     onToggleViewOnly: () -> Unit = {},
     onSettings: () -> Unit,onKeyboard: () -> Unit,onApps: () -> Unit,onPip: () -> Unit,onEnd: () -> Unit) {
     val l=LocalLanguage.current; val context=LocalContext.current; val host=LocalView.current
@@ -500,15 +495,14 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
         if(pip) {
             hidden=false
             drag=null
-            onExpanded(false)
         }
     }
-    LaunchedEffect(expanded,drag,hidden,pip) { if(!pip && !expanded && drag==null && !hidden) { delay(4000); hidden=true } }
+    LaunchedEffect(drag,hidden,pip) { if(!pip && drag==null && !hidden) { delay(4000); hidden=true } }
     DisposableEffect(host) { onDispose { host.systemGestureExclusionRects=emptyList() } }
     BoxWithConstraints(Modifier.fillMaxSize().imePadding()) {
         val density=LocalDensity.current
         val w=with(density) { maxWidth.toPx() }; val h=with(density) { maxHeight.toPx() }
-        val targetControlWidth=if(pip) maxOf(0.dp,minOf(maxWidth-20.dp,300.dp)) else if(hidden) 120.dp else minOf(maxWidth-24.dp,if(expanded) 320.dp else 284.dp)
+        val targetControlWidth=if(pip) maxOf(0.dp,minOf(maxWidth-20.dp,300.dp)) else if(hidden) 44.dp else minOf(maxWidth-24.dp,320.dp)
         val animatedControlWidth by animateDpAsState(
             targetValue=targetControlWidth,
             animationSpec=spring(dampingRatio=.78f,stiffness=Spring.StiffnessMediumLow),
@@ -521,7 +515,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
         val bottom=maxOf(WindowInsets.displayCutout.getBottom(density),WindowInsets.navigationBarsIgnoringVisibility.getBottom(density))+with(density) { (if(pip) 10.dp else 12.dp).toPx() }
         val maxY=(h-bottom-ch).coerceAtLeast(top); val x=if(pip) ((w-cw)/2f).coerceAtLeast(0f) else if(right) (w-cw).coerceAtLeast(0f) else 0f
         val y=if(pip) maxY else (h*fraction).coerceIn(top,maxY)
-        fun save() { val p=drag ?: return; right=p.x+cw/2>w/2; fraction=if(h>0) (p.y/h).coerceIn(0f,1f) else 0f; prefs.edit().putBoolean("right",right).putFloat("anchor_y",fraction).apply(); drag=null; onExpanded(false); hidden=true }
+        fun save() { val p=drag ?: return; right=p.x+cw/2>w/2; fraction=if(h>0) (p.y/h).coerceIn(0f,1f) else 0f; prefs.edit().putBoolean("right",right).putFloat("anchor_y",fraction).apply(); drag=null; hidden=true }
         val dragModifier=Modifier.pointerInput(w,h,cw,ch,top,maxY) { detectDragGestures(onDragStart={ drag=Offset(x,y) },onDragEnd={ save() },onDragCancel={ save() },onDrag={ change,amount -> change.consume(); val p=drag ?: Offset(x,y); drag=Offset((p.x+amount.x).coerceIn(0f,(w-cw).coerceAtLeast(0f)),(p.y+amount.y).coerceIn(top,maxY)) }) }
         val position=drag ?: Offset(x,y)
         Box(Modifier.offset { IntOffset(position.x.roundToInt(),position.y.roundToInt()) }.width(controlWidth).onSizeChanged { measured=it }.onGloballyPositioned { layout ->
@@ -563,63 +557,50 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
                 },
                 label="floating control fold"
             ) { folded ->
-                if(folded) Box(Modifier.then(dragModifier).height(32.dp)) {
-                    // Collapsed form is a thin horizontal bar (status dot +
-                    // short status), not the old 48dp round button: tap it to
-                    // bring the card back, drag it to move it.
-                    Surface(
-                        modifier=Modifier.fillMaxSize().semantics { contentDescription=status },
-                        shape=RoundedCornerShape(50),
-                        color=MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha=.94f),
-                        tonalElevation=3.dp,
-                        shadowElevation=3.dp,
-                        onClick={ hidden=false }
+                if(folded) Box(Modifier.then(dragModifier).size(48.dp)) {
+                    FilledTonalIconButton(
+                        onClick={ hidden=false },
+                        shapes=IconButtonShapes(MaterialTheme.shapes.large,MaterialTheme.shapes.medium),
+                        modifier=Modifier.fillMaxSize().semantics { contentDescription=status }
                     ) {
-                        Row(Modifier.padding(horizontal=10.dp),verticalAlignment=Alignment.CenterVertically) {
-                            StatusIndicator(running,accent,Modifier.size(11.dp))
-                            Spacer(Modifier.width(7.dp))
-                            Text(status,style=MaterialTheme.typography.labelSmall,maxLines=1,softWrap=false,overflow=TextOverflow.Ellipsis,color=MaterialTheme.colorScheme.onSurface)
-                        }
+                        StatusIndicator(running,accent,Modifier.size(22.dp))
                     }
                 } else androidx.compose.material3.Card(Modifier.padding(horizontal=8.dp).shadow(8.dp,MaterialTheme.shapes.largeIncreased),shape=MaterialTheme.shapes.largeIncreased) { Column(Modifier.padding(horizontal=12.dp,vertical=6.dp)) {
+                    // Status row: tap it to hide the card back to the round
+                    // button. No expand arrow: the actions below are always
+                    // visible, so there is nothing to expand into.
                     Row(Modifier.fillMaxWidth().then(dragModifier).clickable(
                         indication=null,
                         interactionSource=remember { MutableInteractionSource() }
-                    ) { onExpanded(false); hidden=true },verticalAlignment=Alignment.CenterVertically) {
+                    ) { hidden=true },verticalAlignment=Alignment.CenterVertically) {
                         StatusIndicator(running,accent,Modifier.size(16.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text(if(!expanded && running && !purpose.isNullOrBlank()) purpose else status,modifier=Modifier.weight(1f),style=MaterialTheme.typography.bodyMedium,maxLines=if(expanded) 1 else 2,overflow=TextOverflow.Ellipsis,color=MaterialTheme.colorScheme.onSurface)
-                        IconButton(onClick={ onExpanded(!expanded) },modifier=Modifier.size(48.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowForward,if(expanded) l.text("折叠操作","Collapse actions","摺疊操作") else l.text("展开操作","Expand actions","展開操作"),Modifier.size(18.dp).graphicsLayer { rotationZ=if(expanded) -90f else 90f }) }
+                        Text(if(running && !purpose.isNullOrBlank()) purpose else status,modifier=Modifier.weight(1f),style=MaterialTheme.typography.bodyMedium,maxLines=2,overflow=TextOverflow.Ellipsis,color=MaterialTheme.colorScheme.onSurface)
                     }
-                    purpose?.takeIf { expanded && it.isNotBlank() && phase=="running" }?.let { Text(it,modifier=Modifier.padding(top=4.dp),style=MaterialTheme.typography.bodyMedium,maxLines=3,overflow=TextOverflow.Ellipsis,color=MaterialTheme.colorScheme.onSurface) }
-                    AnimatedVisibility(expanded,
-                        enter=expandVertically(MaterialTheme.motionScheme.defaultSpatialSpec(),expandFrom=Alignment.Top)+fadeIn(MaterialTheme.motionScheme.defaultEffectsSpec()),
-                        exit=shrinkVertically(MaterialTheme.motionScheme.fastSpatialSpec(),shrinkTowards=Alignment.Top)+fadeOut(MaterialTheme.motionScheme.fastEffectsSpec())) {
-                        Column(Modifier.padding(top=10.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
-                            val leadingShapes = ButtonGroupDefaults.connectedLeadingButtonShapes()
-                            val middleShapes = ButtonGroupDefaults.connectedMiddleButtonShapes()
-                            val trailingShapes = ButtonGroupDefaults.connectedTrailingButtonShapes()
-                            ButtonGroup(
-                                overflowIndicator = { ButtonGroupDefaults.OverflowIndicator(it) },
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                floatingAction(Icons.Default.Apps, l.text("应用", "Apps", "應用"),
-                                    IconButtonShapes(leadingShapes.shape, leadingShapes.pressedShape), onApps)
-                                floatingAction(Icons.Default.Edit, l.text("输入", "Type", "輸入"),
-                                    IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onKeyboard)
-                                if(pipEnabled) floatingAction(Icons.Default.PictureInPicture, l.text("画中画", "PiP", "子母畫面"),
-                                    IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onPip)
-                                floatingAction(if(viewOnly) Icons.Default.VisibilityOff else Icons.Default.Visibility, l.text(if(viewOnly) "只看中" else "只看", if(viewOnly) "View only" else "View only", if(viewOnly) "僅觀看" else "僅觀看"),
-                                    IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onToggleViewOnly)
-                                floatingAction(Icons.Default.Settings, l.text("设置", "Settings", "設定"),
-                                    IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onSettings)
-                                floatingAction(Icons.Default.StopCircle, l.text("结束", "End", "結束"),
-                                    IconButtonShapes(trailingShapes.shape, trailingShapes.pressedShape), onEnd)
-                            }
-                            if(!live) Text(l.text("兼容预览","Compatibility preview","相容預覽"),style=MaterialTheme.typography.labelLarge,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column(Modifier.padding(top=10.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                        val leadingShapes = ButtonGroupDefaults.connectedLeadingButtonShapes()
+                        val middleShapes = ButtonGroupDefaults.connectedMiddleButtonShapes()
+                        val trailingShapes = ButtonGroupDefaults.connectedTrailingButtonShapes()
+                        ButtonGroup(
+                            overflowIndicator = { ButtonGroupDefaults.OverflowIndicator(it) },
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            floatingAction(Icons.Default.Apps, l.text("应用", "Apps", "應用"),
+                                IconButtonShapes(leadingShapes.shape, leadingShapes.pressedShape), onApps)
+                            floatingAction(Icons.Default.Edit, l.text("输入", "Type", "輸入"),
+                                IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onKeyboard)
+                            if(pipEnabled) floatingAction(Icons.Default.PictureInPicture, l.text("画中画", "PiP", "子母畫面"),
+                                IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onPip)
+                            floatingAction(if(viewOnly) Icons.Default.VisibilityOff else Icons.Default.Visibility, l.text(if(viewOnly) "只看中" else "只看", if(viewOnly) "View only" else "View only", if(viewOnly) "僅觀看" else "僅觀看"),
+                                IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onToggleViewOnly)
+                            floatingAction(Icons.Default.Settings, l.text("设置", "Settings", "設定"),
+                                IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onSettings)
+                            floatingAction(Icons.Default.StopCircle, l.text("结束", "End", "結束"),
+                                IconButtonShapes(trailingShapes.shape, trailingShapes.pressedShape), onEnd)
                         }
+                        if(!live) Text(l.text("兼容预览","Compatibility preview","相容預覽"),style=MaterialTheme.typography.labelLarge,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } }
             } }
