@@ -201,7 +201,15 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                         p.x = (downWinX + dx).coerceIn(0, (screenW - p.width).coerceAtLeast(0))
                         p.y = (downWinY + dy).coerceIn(0, (screenH - p.height).coerceAtLeast(0))
                         updateLayout()
-                        if (collapseIfAtEdge()) collapsedDuringDrag = true
+                        // Only collapse mid-drag when the drag is pushing
+                        // the window into the edge horizontally. A vertical
+                        // drag along the edge used to collapse on the first
+                        // move: the window already sits at p.x == 0 there,
+                        // so the bare position check fired even though the
+                        // user was only moving it up/down.
+                        if (abs(dx) > abs(dy)) {
+                            if (collapseIfAtEdge()) collapsedDuringDrag = true
+                        }
                     }
                 }
             }
@@ -222,8 +230,14 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                     snapToEdge()
                 } else {
                     val p = params ?: return true
-                    if (p.x <= edgePx) collapse(SIDE_LEFT)
-                    else if (p.x + p.width >= screenW - edgePx) collapse(SIDE_RIGHT)
+                    // Only snap into the bar on release when the drag
+                    // actually moved the window toward that edge. A window
+                    // already sitting at the edge used to collapse on any
+                    // release within 8dp — including a vertical drag along
+                    // the edge, or a slight nudge inward.
+                    val dx = (event.rawX - downRawX).roundToInt()
+                    if (p.x <= edgePx && dx < -touchSlopPx) collapse(SIDE_LEFT)
+                    else if (p.x + p.width >= screenW - edgePx && dx > touchSlopPx) collapse(SIDE_RIGHT)
                     else saveSize()
                 }
             }
