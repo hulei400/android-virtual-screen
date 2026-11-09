@@ -31,6 +31,13 @@
         <provider android:name="rikka.shizuku.ShizukuProvider" android:authorities="${applicationId}.shizuku" android:multiprocess="false" android:exported="true" android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
         <provider android:name="roro.stellar.StellarProvider" android:authorities="${applicationId}.stellar" android:multiprocess="false" android:exported="true" android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
         <meta-data android:name="roro.stellar.permissions" android:value="stellar" />
+        <!-- LSPosed module declaration: this APK is both the virtual-screen app
+             and the launch-guard module. Enable it in LSPosed Manager with the
+             System Framework scope, then reboot once. -->
+        <meta-data android:name="xposedmodule" android:value="true" />
+        <meta-data android:name="xposeddescription" android:value="启动保护：应用已在虚拟屏上时，在手机上新开一份，不打扰虚拟屏那份。" />
+        <meta-data android:name="xposedminversion" android:value="82" />
+        <meta-data android:name="xposedscope" android:resource="@array/xposed_scope" />
         <service android:name=".core.ScreenAccessibilityService" android:exported="true" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:label="@string/app_name">
             <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
             <meta-data android:name="android.accessibilityservice" android:resource="@xml/accessibility_service" />

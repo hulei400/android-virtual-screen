@@ -101,6 +101,11 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:5.5.0")
     implementation("org.tomlj:tomlj:1.1.1")
 
+    // LSPosed launch-guard hook (compileOnly: the framework provides these
+    // classes at runtime; bundling them would crash). The hook class lives
+    // in xposed/ and is loaded by LSPosed into system_server only.
+    compileOnly("de.robv.android.xposed:api:82")
+
     // Settings keep their existing saved back stack and display lifecycle.
     implementation("androidx.compose.material3:material3:1.5.0-alpha29")
     implementation("androidx.compose.material3:material3-window-size-class:1.5.0-alpha29")

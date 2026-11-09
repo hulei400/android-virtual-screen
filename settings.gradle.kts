@@ -16,6 +16,8 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven("https://jitpack.io")
+        // Xposed API (compileOnly; the framework provides it at runtime).
+        maven("https://api.xposed.info/")
     }
 }
 
