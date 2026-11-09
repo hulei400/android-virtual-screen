@@ -104,6 +104,18 @@ class RuntimeNotificationTest {
         }
     }
 
+    @Test fun shellCommandShowsShellChipAndFullCommandInDetail() {
+        val activity = ToolActivity("activity", "agent", "run_shell", "执行命令：dumpsys window displays", "running")
+        val content = RuntimeNotification.describe(context,
+            SessionState(status = SessionStatus.RUNNING, sessionId = "screen-1", displayId = 8,
+                lease = Lease("agent", "private-token", Long.MAX_VALUE, 1)),
+            McpServerState(running = true), activity, TunnelState(), changing = false)
+
+        assertTrue(content.working)
+        assertEquals("执行命令：dumpsys window displays", content.detail)
+        assertEquals(context.getString(R.string.notification_chip_shell), content.chip)
+    }
+
     @Test fun idleMcpDoesNotRequestLiveUpdatePromotion() {
         val content = RuntimeNotification.describe(context, SessionState(), McpServerState(running = true),
             null, TunnelState(), changing = false)

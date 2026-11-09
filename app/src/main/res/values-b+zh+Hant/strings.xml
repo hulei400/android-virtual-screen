@@ -35,6 +35,7 @@
     <string name="notification_clients">已連線 %1$d 個用戶端 · 等待虛擬螢幕</string>
     <string name="notification_tunnel_waiting">通道已連線 · 等待虛擬螢幕</string>
     <string name="notification_chip_active">操作中</string>
+    <string name="notification_chip_shell">執行指令</string>
     <string name="notification_chip_remote">遠端中</string>
     <string name="notification_chip_local">執行中</string>
     <string name="notification_chip_ready">MCP</string>

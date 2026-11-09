@@ -36,6 +36,7 @@
     <string name="notification_clients">已连接 %1$d 个客户端 · 等待虚拟屏</string>
     <string name="notification_tunnel_waiting">隧道已连接 · 等待虚拟屏</string>
     <string name="notification_chip_active">操作中</string>
+    <string name="notification_chip_shell">执行命令</string>
     <string name="notification_chip_remote">远程中</string>
     <string name="notification_chip_local">运行中</string>
     <string name="notification_chip_ready">MCP</string>

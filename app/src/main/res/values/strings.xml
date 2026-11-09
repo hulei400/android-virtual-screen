@@ -36,6 +36,7 @@
     <string name="notification_clients">%1$d clients connected · Waiting for a virtual screen</string>
     <string name="notification_tunnel_waiting">Tunnel is connected · Waiting for a virtual screen</string>
     <string name="notification_chip_active">Active</string>
+    <string name="notification_chip_shell">Command</string>
     <string name="notification_chip_remote">Remote</string>
     <string name="notification_chip_local">Screen</string>
     <string name="notification_chip_ready">MCP</string>

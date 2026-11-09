@@ -116,6 +116,10 @@ internal object RuntimeNotification {
         val chip = when {
             approval != null -> context.getString(R.string.notification_chip_approval)
             error -> context.getString(R.string.notification_chip_error)
+            // A shell command shows only its state on the capsule ("执行命令"),
+            // never the command text itself — the full command is already in
+            // the expanded card's detail (the tool purpose), so a tap shows it.
+            working && currentActivity?.tool == "run_shell" -> context.getString(R.string.notification_chip_shell)
             working -> context.getString(R.string.notification_chip_active)
             screen.displayId != null && currentApp != null -> currentApp.label
             remote && screen.displayId != null -> context.getString(R.string.notification_chip_remote)
