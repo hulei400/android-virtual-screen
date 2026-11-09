@@ -12,15 +12,31 @@ import android.os.PowerManager
 import android.net.Uri
 import io.github.lejw0925.virtualscreen.core.AppRestartRequest
 import io.github.lejw0925.virtualscreen.core.AppRestartApprovalManager
+import io.github.lejw0925.virtualscreen.core.ControlRequest
+import io.github.lejw0925.virtualscreen.core.SessionState
 import io.github.lejw0925.virtualscreen.core.SessionStatus
 import io.github.lejw0925.virtualscreen.core.PreviewStatus
 import io.github.lejw0925.virtualscreen.core.VirtualScreenSessionManager
 import io.github.lejw0925.virtualscreen.core.failure
 import io.github.lejw0925.virtualscreen.core.runtime
+import io.github.lejw0925.virtualscreen.mcp.McpServerState
+import io.github.lejw0925.virtualscreen.mcp.ToolActivity
+import io.github.lejw0925.virtualscreen.tunnel.TunnelState
 import io.github.lejw0925.virtualscreen.ui.FloatViewer
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.util.concurrent.atomic.AtomicInteger
+
+/** The five notification inputs besides the current app; the top app is
+ *  combined in a second step so each combine keeps a shape that already
+ *  compiled (five flows, then two). */
+private data class NotificationInputs(
+    val screen: SessionState,
+    val status: Triple<Pair<McpServerState, ToolActivity?>, TunnelState, Boolean>,
+    val control: List<ControlRequest>,
+    val restart: List<AppRestartRequest>,
+    val controlMode: Boolean,
+)
 
 class VirtualScreenForegroundService : Service() {
     companion object {
@@ -100,10 +116,16 @@ class VirtualScreenForegroundService : Service() {
             val runtime = combine(app.mcp.flow, app.mcp.activity, app.tunnels.flow, app.mcpChanging) { server, activity, tunnel, changing ->
                 Triple(server to activity, tunnel, changing)
             }
-            combine(app.sessions.state, runtime, app.mcp.approvals.pending, app.sessions.restartApprovals.pending,
-                app.floatViewer.controlModeFlow, currentApp) { screen, status, control, restart, controlMode, app ->
-                RuntimeNotification.describe(this@VirtualScreenForegroundService, screen, status.first.first, status.first.second,
-                    status.second, status.third, control, restart, controlMode, app)
+            // Five flows that describe() needs besides the current app; the
+            // top app is combined in a second step (two-flow combine) so no
+            // single combine has to resolve six heterogeneous flows.
+            val inputs = combine(app.sessions.state, runtime, app.mcp.approvals.pending, app.sessions.restartApprovals.pending,
+                app.floatViewer.controlModeFlow) { screen, status, control, restart, controlMode ->
+                NotificationInputs(screen, status, control, restart, controlMode)
+            }
+            combine(inputs, currentApp) { input, topApp ->
+                RuntimeNotification.describe(this@VirtualScreenForegroundService, input.screen, input.status.first.first, input.status.first.second,
+                    input.status.second, input.status.third, input.control, input.restart, input.controlMode, topApp)
             }.combine(dismissedLiveSession) { content, dismissed -> content to dismissed.takeIf { it == content.liveSession } }
                 .distinctUntilChanged().collect { (content, dismissed) ->
                     manager.notify(ID, RuntimeNotification.build(this@VirtualScreenForegroundService, content, dismissed))
