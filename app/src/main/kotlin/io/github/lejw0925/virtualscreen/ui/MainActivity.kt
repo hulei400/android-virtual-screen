@@ -348,7 +348,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
     val context = LocalContext.current
     val toggleMcp=rememberMcpToggle(app,notifications)
     var view by remember { mutableStateOf<LiveDisplayView?>(null) }; var live by remember { mutableStateOf(false) }
-    var chooseApp by remember { mutableStateOf(false) }; var keyboard by remember { mutableStateOf(false) }
+    var chooseApp by remember { mutableStateOf(false) }
     var viewerSize by remember { mutableStateOf(IntSize.Zero) }
     var error by remember { mutableStateOf<String?>(null) }; var busy by remember { mutableStateOf(false) }; var applications by remember { mutableStateOf(emptyList<DiscoveredApplication>()) }
     val task: (suspend () -> Unit) -> Unit={ block -> scope.launch { busy=true; try { withContext(Dispatchers.IO) { app.runtimeWork { app.awaitShutdown(); block() } } } catch(c: CancellationException) { throw c } catch(e: Exception) { error=e.code() } finally { busy=false } } }
@@ -373,10 +373,10 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
             finally { view?.setResumed(false) }
         }
     }
-    BackHandler(state.displayId!=null || keyboard) {
+    BackHandler(state.displayId!=null) {
         // In view-only mode Back only leaves the fullscreen viewer; it must not
         // inject Back into the virtual display, and must not turn the setting off.
-        when { keyboard -> keyboard=false; settings.viewOnly -> if(settings.pipEnabled) onPip() else (context as? Activity)?.finish(); else -> localInput(BackendOperation.Back) }
+        when { settings.viewOnly -> if(settings.pipEnabled) onPip() else (context as? Activity)?.finish(); else -> localInput(BackendOperation.Back) }
     }
     val imeVisible=WindowInsets.ime.getBottom(LocalDensity.current)>0
     val background=if(state.displayId!=null) Color.Black else MaterialTheme.colorScheme.background
@@ -424,10 +424,10 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
         }
         if(state.displayId!=null) FloatingControls(state,server.running,tool?.purpose,tool?.phase,live,pip,settings.pipEnabled,settings.viewOnly,
             onToggleViewOnly={ onToggleViewOnly() },
-            onSettings=onSettings,onKeyboard={ keyboard=true },onApps={ task { applications=app.sessions.discoverApplications(includeIcons=true).filter { it.exported && it.packageName!=app.packageName }; chooseApp=true } },
+            onSettings=onSettings,onApps={ task { applications=app.sessions.discoverApplications(includeIcons=true).filter { it.exported && it.packageName!=app.packageName }; chooseApp=true } },
             onPip={ app.floatViewer.hide(); onPip() }, onEnd={
                 val session = state.sessionId ?: return@FloatingControls
-                keyboard=false; chooseApp=false; error=null
+                chooseApp=false; error=null
                 task {
                     app.sessions.closeFromPhone(session)
                     withContext(Dispatchers.Main) {
@@ -459,13 +459,6 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
             check(result.ok) { result.code ?: "LAUNCH_FAILED" }; app.settings.update { it.copy(lastComponent=item.component) }
         }
     } }
-    if(keyboard) AppDialog(onDismissRequest={ keyboard=false }) {
-        var draft by remember { mutableStateOf("") }; var replace by remember { mutableStateOf(false) }
-        Text(l.text("输入文字","Type text","輸入文字"),style=MaterialTheme.typography.headlineSmall,color=MaterialTheme.colorScheme.onSurface)
-        Field(l.text("文字","Text","文字"),draft,multiline=true) { draft=it }
-        SwitchPreference(checked=replace,onCheckedChange={ replace=it },title=l.text("替换全部","Replace all","取代全部"))
-        Button(onClick={ localInput(BackendOperation.Text(draft,replace)); keyboard=false },enabled=draft.isNotEmpty() || replace) { Text(l.text("发送到虚拟屏","Send to virtual screen","傳送到虛擬螢幕")) }
-    }
 }
 
 @Composable private fun AppPicker(apps: List<DiscoveredApplication>,onDismiss: () -> Unit,onChoose: (DiscoveredApplication) -> Unit) {
@@ -483,7 +476,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable private fun FloatingControls(state: SessionState,mcpRunning: Boolean,purpose: String?,phase: String?,live: Boolean,pip: Boolean,pipEnabled: Boolean,viewOnly: Boolean = false,
     onToggleViewOnly: () -> Unit = {},
-    onSettings: () -> Unit,onKeyboard: () -> Unit,onApps: () -> Unit,onPip: () -> Unit,onEnd: () -> Unit) {
+    onSettings: () -> Unit,onApps: () -> Unit,onPip: () -> Unit,onEnd: () -> Unit) {
     val l=LocalLanguage.current; val context=LocalContext.current; val host=LocalView.current
     val prefs=remember { context.getSharedPreferences("viewer_controls",0) }
     var right by remember { mutableStateOf(prefs.getBoolean("right",true)) }; var fraction by remember { mutableFloatStateOf(prefs.getFloat("anchor_y",.22f)) }
@@ -597,8 +590,6 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
                         ) {
                             floatingAction(Icons.Default.Apps, l.text("应用", "Apps", "應用"),
                                 IconButtonShapes(leadingShapes.shape, leadingShapes.pressedShape), onApps)
-                            floatingAction(Icons.Default.Edit, l.text("输入", "Type", "輸入"),
-                                IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onKeyboard)
                             if(pipEnabled) floatingAction(Icons.Default.PictureInPicture, l.text("画中画", "PiP", "子母畫面"),
                                 IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onPip)
                             floatingAction(if(viewOnly) Icons.Default.VisibilityOff else Icons.Default.Visibility, l.text(if(viewOnly) "只看中" else "只看", if(viewOnly) "View only" else "View only", if(viewOnly) "僅觀看" else "僅觀看"),
