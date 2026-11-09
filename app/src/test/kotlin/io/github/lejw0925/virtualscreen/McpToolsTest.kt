@@ -126,7 +126,7 @@ class McpToolsTest {
         val registry=McpToolRegistry(sessions)
         val specs=registry.tools.associateBy { it.name }
         assertEquals(setOf("acquire_control","release_control","request_control","get_status","get_request_receipt",
-            "create_screen","configure_screen","close_screen","list_apps","launch_app","launch_on_phone","run_shell","observe","tap_at","long_press_at","long_press_drag","swipe_path","scroll_at",
+            "create_screen","configure_screen","close_screen","list_apps","launch_app","launch_on_phone","run_shell","observe","tap_at","long_press_at","long_press_drag","swipe_path","touch","scroll_at",
             "input_text","node_action","press_key","wait"),specs.keys)
         assertFalse(specs.getValue("acquire_control").schema.getJSONObject("properties").has("lease_token"))
         assertTrue(specs.getValue("get_request_receipt").schema.getJSONArray("required").toString().contains("request_id"))
@@ -213,6 +213,48 @@ class McpToolsTest {
         assertTrue(registry.call("tap_at",args,"test").getJSONObject("structuredContent").getBoolean("ok"))
         assertEquals(2,root.inputs)
         assertEquals(2,root.inspections)
+        sessions.shutdown()
+    }
+
+    @Test fun statefulTouchHoldsAcrossCallsWithoutObservation() = runBlocking {
+        val root=FakeBackend(BackendKind.ROOT)
+        val sessions=VirtualScreenSessionManager(RuntimeEnvironment.getApplication(),root,FakeBackend(BackendKind.SHIZUKU))
+        val registry=McpToolRegistry(sessions)
+        val lease=(sessions.acquireLease("test") as LeaseDecision.Granted).lease
+        sessions.create("test",lease.token)
+        fun touch(action: String,x: Int = 10,y: Int = 20) = registry.call("touch",
+            JSONObject().put("purpose","Hold then drag").put("lease_token",lease.token)
+                .put("action",action).put("x",x).put("y",y).put("observe_after","none"),"test")
+            .getJSONObject("structuredContent")
+        assertTrue(touch("down").getBoolean("ok")); assertEquals(1,root.inputs)
+        assertTrue(touch("move",30,40).getBoolean("ok")); assertEquals(2,root.inputs)
+        assertTrue(touch("up").getBoolean("ok")); assertEquals(3,root.inputs)
+        // Missing action is rejected before any input is dispatched.
+        val missing=registry.call("touch",JSONObject().put("purpose","No action").put("lease_token",lease.token)
+            .put("observe_after","none"),"test").getJSONObject("structuredContent")
+        assertEquals("MISSING_ARGUMENT",missing.getString("code")); assertEquals(3,root.inputs)
+        sessions.shutdown()
+    }
+
+    @Test fun runShellIsRecordedInTheActivityLog() = runBlocking {
+        val entries = mutableListOf<ActivityLogEntry>()
+        val backend = object : VirtualScreenBackend by FakeBackend(BackendKind.ROOT) {
+            override suspend fun runShell(handle: VirtualScreenHandle, command: String, timeoutMs: Int) =
+                BackendResult.success("exit_code" to 0, "stdout" to "hello\n", "stderr" to "", "timed_out" to false, "truncated" to false)
+        }
+        val sessions = VirtualScreenSessionManager(RuntimeEnvironment.getApplication(), backend, FakeBackend(BackendKind.SHIZUKU),
+            log = ActivityLogger { entries += it })
+        val registry = McpToolRegistry(sessions)
+        val lease = (sessions.acquireLease("test") as LeaseDecision.Granted).lease
+        sessions.create("test", lease.token)
+        val result = registry.call("run_shell", JSONObject().put("purpose", "Check shell history")
+            .put("lease_token", lease.token).put("command", "echo hello"), "test").getJSONObject("structuredContent")
+        assertTrue(result.getBoolean("ok"))
+        val shell = entries.filter { it.category == "shell" }
+        assertEquals(1, shell.size)
+        assertEquals("echo hello", shell.single().operation)
+        assertEquals("exit=0", shell.single().status)
+        assertTrue(shell.single().detail?.contains("hello") == true)
         sessions.shutdown()
     }
 
@@ -326,7 +368,7 @@ class McpToolsTest {
         val sessions=VirtualScreenSessionManager(RuntimeEnvironment.getApplication(),FakeBackend(BackendKind.ROOT),FakeBackend(BackendKind.SHIZUKU))
         var language=UiLanguage.ZH_HANS
         val registry=McpToolRegistry(sessions) { language }
-        val names=registry.tools.map { it.name }; assertEquals(22,names.size)
+        val names=registry.tools.map { it.name }; assertEquals(23,names.size)
         for(l in UiLanguage.entries) {
             language=l
             assertEquals(names,registry.tools.map { it.name })

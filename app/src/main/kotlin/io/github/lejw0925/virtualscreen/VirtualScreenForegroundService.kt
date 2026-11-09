@@ -56,9 +56,6 @@ class VirtualScreenForegroundService : Service() {
         private const val ID = 8732
     }
     private val dismissedLiveSession = MutableStateFlow<String?>(null)
-    /** The app currently on top of the virtual display, polled while a
-     *  display is running; feeds the Fluid Cloud card. */
-    private val currentApp = MutableStateFlow<io.github.lejw0925.virtualscreen.core.CurrentApp?>(null)
     private val app get() = application as VirtualScreenApplication
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var wakeLock: PowerManager.WakeLock? = null
@@ -123,7 +120,7 @@ class VirtualScreenForegroundService : Service() {
                 app.floatViewer.controlModeFlow) { screen, status, control, restart, controlMode ->
                 NotificationInputs(screen, status, control, restart, controlMode)
             }
-            combine(inputs, currentApp) { input, topApp ->
+            combine(inputs, app.sessions.currentAppFlow) { input, topApp ->
                 RuntimeNotification.describe(this@VirtualScreenForegroundService, input.screen, input.status.first.first, input.status.first.second,
                     input.status.second, input.status.third, input.control, input.restart, input.controlMode, topApp)
             }.combine(dismissedLiveSession) { content, dismissed -> content to dismissed.takeIf { it == content.liveSession } }
@@ -131,20 +128,15 @@ class VirtualScreenForegroundService : Service() {
                     manager.notify(ID, RuntimeNotification.build(this@VirtualScreenForegroundService, content, dismissed))
                 }
         }
-        // Poll the virtual display's top app while it runs; the card only
-        // refreshes when the label actually changes (distinctUntilChanged
-        // above), so this stays cheap. No push exists for user-driven app
-        // switches inside the display, hence the poll.
+        // Fallback poll for the Fluid Cloud card's current app. The primary
+        // path is event-driven (the session manager syncs on every observe),
+        // so this only catches app switches made without any observe, and
+        // runs every 10s instead of 3s. The card only refreshes when the
+        // label actually changes (distinctUntilChanged above).
         scope.launch {
             while (true) {
-                val running = app.sessions.state.value.status == SessionStatus.RUNNING
-                    && app.sessions.state.value.displayId != null
-                currentApp.value = if (running) {
-                    runCatching { app.sessions.currentApp() }.getOrNull()
-                } else {
-                    null
-                }
-                delay(3_000)
+                runCatching { app.sessions.refreshCurrentApp() }
+                delay(10_000)
             }
         }
         scope.launch {

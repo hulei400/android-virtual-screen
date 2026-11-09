@@ -352,7 +352,7 @@ private fun mcpToolIcon(tool: String) = when (tool) {
     "acquire_control", "release_control", "request_control" -> Icons.Default.Security
     "create_screen", "configure_screen", "close_screen", "launch_app", "launch_on_phone" -> Icons.AutoMirrored.Filled.ScreenShare
     "observe" -> Icons.Default.CameraAlt
-    "tap_at", "long_press_at", "swipe_path", "scroll_at", "input_text", "press_key" -> Icons.Default.TouchApp
+    "tap_at", "long_press_at", "swipe_path", "scroll_at", "input_text", "press_key", "touch" -> Icons.Default.TouchApp
     "node_action" -> Icons.Default.AccountTree
     "get_status" -> Icons.Default.Info
     "get_request_receipt" -> Icons.Default.Description
@@ -376,6 +376,7 @@ private fun mcpToolLabel(l: UiLanguage,tool: String)=when(tool) {
     "tap_at" -> l.text("点击","Tap","點按")
     "long_press_at" -> l.text("长按","Long press","長按")
     "swipe_path" -> l.text("滑动","Swipe","滑動")
+    "touch" -> l.text("按住拖动","Hold and drag","按住拖動")
     "scroll_at" -> l.text("滚动","Scroll","捲動")
     "input_text" -> l.text("输入文本","Input text","輸入文字")
     "node_action" -> l.text("节点操作","Node action","節點操作")

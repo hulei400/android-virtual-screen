@@ -125,6 +125,10 @@ sealed interface BackendOperation {
     /** Press-hold at the start point, then drag to the end point and release — one down/move/up stream (sliders). */
     data class LongPressDrag(val startX: Int, val startY: Int, val endX: Int, val endY: Int, val holdMs: Int = 500, val moveMs: Int = 300) : BackendOperation
     data class Swipe(val points: List<Pair<Int, Int>>, val durationMs: Int = 300) : BackendOperation
+    /** Stateful touch held across calls: down, then move/up in later calls
+     *  (press-and-hold while the UI changes, then drag). x/y used for
+     *  down/move; durationMs is the move interpolation time. */
+    data class Touch(val action: String, val x: Int = 0, val y: Int = 0, val durationMs: Int = 100) : BackendOperation
     data class Scroll(val x: Int, val y: Int, val delta: Int) : BackendOperation
     data class Text(val value: String, val replace: Boolean = false) : BackendOperation
     data class Key(val keyCode: Int) : BackendOperation

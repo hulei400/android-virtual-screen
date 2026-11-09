@@ -108,6 +108,8 @@ abstract class CommandBackend(protected val context: Context) : VirtualScreenBac
                     .put("end_x", operation.endX).put("end_y", operation.endY)
                     .put("hold_ms", operation.holdMs).put("move_ms", operation.moveMs)
                 is BackendOperation.Swipe -> packet(handle, "swipe").put("points", JSONArray(operation.points.map { listOf(it.first, it.second) })).put("durationMs", operation.durationMs)
+                is BackendOperation.Touch -> packet(handle, "touch").put("touch_action", operation.action)
+                    .put("x", operation.x).put("y", operation.y).put("durationMs", operation.durationMs)
                 is BackendOperation.Scroll -> packet(handle, "scroll").put("x", operation.x).put("y", operation.y).put("delta", operation.delta)
                 is BackendOperation.Key -> packet(handle, "key").put("keyCode", operation.keyCode)
                 BackendOperation.Back -> packet(handle, "key").put("keyCode", 4)

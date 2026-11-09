@@ -64,6 +64,56 @@ internal class RootInputInjector(
 
     fun injectRealtime(event: MotionEvent): Boolean = injectionLock.withLock { dispatchEvent(event, false) }
 
+    /** True while a stateful touch (touch tool) is held down across MCP calls. */
+    fun hasActiveTouch(): Boolean = injectionLock.withLock { activeTouch != null }
+
+    /** Stateful touch held across MCP calls: down, then move/up in later calls.
+     *  The downTime and position come from activeTouch, which inject() keeps
+     *  current; UP/CANCEL clear it. */
+    fun touchDown(x: Int, y: Int): JSONObject = injectionLock.withLock {
+        if (activeTouch != null) return@withLock JSONObject().put("ok", false).put("code", "TOUCH_ALREADY_ACTIVE")
+            .put("message", "已有按住的手势，先 touch up 或 cancel 再按。")
+        val downTime = uptimeMillis()
+        val ok = motion(downTime, MotionEvent.ACTION_DOWN, x.toFloat(), y.toFloat())
+        JSONObject().put("ok", ok).put("displayId", displayId).put("active", ok)
+            .put("x", x).put("y", y).put("effect", "unconfirmed")
+    }
+
+    fun touchMove(x: Int, y: Int, durationMs: Int = 100): JSONObject {
+        require(durationMs in 0..2_000) { "INVALID_DURATION" }
+        val start = injectionLock.withLock { activeTouch?.let { it.downTime to (it.x to it.y) } }
+            ?: return JSONObject().put("ok", false).put("code", "NO_ACTIVE_TOUCH")
+                .put("message", "没有按住的手势，先 touch down 再 move。")
+        val (downTime, from) = start
+        var ok = true
+        if (durationMs > 0) {
+            val begin = uptimeMillis(); val end = begin + durationMs
+            while (uptimeMillis() < end) {
+                val fraction = ((uptimeMillis() - begin).toDouble() / durationMs).coerceIn(0.0, 1.0)
+                val mx = (from.first + (x - from.first) * fraction).toFloat()
+                val my = (from.second + (y - from.second) * fraction).toFloat()
+                if (!motion(downTime, MotionEvent.ACTION_MOVE, mx, my)) { ok = false; break }
+                pause(8)
+            }
+        }
+        if (ok) ok = motion(downTime, MotionEvent.ACTION_MOVE, x.toFloat(), y.toFloat())
+        return JSONObject().put("ok", ok).put("displayId", displayId).put("active", ok)
+            .put("x", x).put("y", y).put("effect", "unconfirmed")
+    }
+
+    fun touchUp(): JSONObject = injectionLock.withLock {
+        val current = activeTouch ?: return@withLock JSONObject().put("ok", false).put("code", "NO_ACTIVE_TOUCH")
+            .put("message", "没有按住的手势，无需松开。")
+        val ok = motion(current.downTime, MotionEvent.ACTION_UP, current.x, current.y)
+        JSONObject().put("ok", ok).put("displayId", displayId).put("active", false).put("effect", "unconfirmed")
+    }
+
+    fun touchCancel(): JSONObject = injectionLock.withLock {
+        val current = activeTouch ?: return@withLock JSONObject().put("ok", true).put("displayId", displayId).put("active", false)
+        val ok = motion(current.downTime, MotionEvent.ACTION_CANCEL, current.x, current.y, wait = false)
+        JSONObject().put("ok", ok).put("displayId", displayId).put("active", false).put("effect", "unconfirmed")
+    }
+
     fun execute(vararg args: String): JSONObject = executeInput {
         when (args[0]) {
             "keyevent" -> key(args[1].toInt())

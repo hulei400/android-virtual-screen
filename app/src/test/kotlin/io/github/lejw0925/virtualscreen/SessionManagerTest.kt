@@ -170,4 +170,24 @@ class SessionManagerTest {
         assertEquals("STALE_OBSERVATION",runCatching { manager.operate(successor.owner,successor.token,observed,BackendOperation.Tap(10,10)) }.exceptionOrNull()?.message)
         assertEquals(0,root.inputs)
     }
+    @Test fun observeSyncsCurrentAppFromWindowsWithoutPolling() = runBlocking {
+        val windows = listOf(WindowSnapshot(1, 7, 1, "com.coolapk.market", "酷安", 100, focused = true))
+        val backend = object : VirtualScreenBackend by FakeBackend(BackendKind.ROOT) {
+            override suspend fun nodes(handle: VirtualScreenHandle, observationId: String) =
+                Result.success(NodeSnapshot(observationId, handle.displayId, "com.coolapk.market", emptyList(), false, emptyList(), windows))
+        }
+        val manager = VirtualScreenSessionManager(context, backend, FakeBackend(BackendKind.SHIZUKU))
+        val lease = (manager.acquireLease("remote") as LeaseDecision.Granted).lease
+        manager.create(lease.owner, lease.token)
+        assertNull(manager.currentAppFlow.value)
+        val observed = manager.observe(lease.owner, lease.token).getOrThrow().values["observation_id"] as String
+        manager.nodes(lease.owner, lease.token, observed).getOrThrow()
+        // Robolectric has no such package, so the label falls back to the package name.
+        assertEquals("com.coolapk.market", manager.currentAppFlow.value?.packageName)
+        assertEquals("com.coolapk.market", manager.currentAppFlow.value?.label)
+        // A second nodes() call with the same top app does not re-resolve.
+        manager.nodes(lease.owner, lease.token, observed).getOrThrow()
+        assertEquals("com.coolapk.market", manager.currentAppFlow.value?.packageName)
+        manager.shutdown()
+    }
 }

@@ -69,13 +69,14 @@ MCP-Protocol-Version: 2025-06-18
 | `long_press_at` | 必填 `x/y`，可选 `duration_ms`，200–2000 ms |
 | `long_press_drag` | 必填 `start_x/start_y/end_x/end_y`，可选 `hold_ms`（100–2000，默认 500）、`move_ms`（100–2000，默认 300）；按住、拖动、松开一次完成，适合滑块 |
 | `swipe_path` | 必填 `points`（2–64 个 `[x,y]`），可选 `duration_ms` |
+| `touch` | 有状态按住：`action` 为 `down/move/up/cancel`；`down/move` 必填 `x/y`，`move` 可选 `duration_ms`（0–2000，默认 100）；按住可跨多次调用，适合“按住等界面变化再拖”；按住期间其他手势被拒绝；不需要观察 |
 | `scroll_at` | 必填 `x/y/delta`；delta 为 -20 到 20 的非零整数 |
 | `input_text` | Unicode 输入，`replace` 替换当前编辑框内容 |
 | `node_action` | 点击、长按、聚焦、滚动、设置文字 |
 | `press_key` | 显示限定的导航和编辑按键，默认返回键 4 |
 | `wait` | 延迟、帧变化、节点文本、存在 / 不存在、前台应用、稳定状态；最长 30 秒 |
 
-共 22 个工具。原 `control/screen/applications/pointer/service_status` 已拆分，客户端升级后需刷新工具发现。`get_status/get_request_receipt/list_apps/observe/wait` 提供只读提示，启动和输入操作不提供只读提示。`observe` 也返回 `takeover_count`。
+共 23 个工具。原 `control/screen/applications/pointer/service_status` 已拆分，客户端升级后需刷新工具发现。`get_status/get_request_receipt/list_apps/observe/wait` 提供只读提示，启动和输入操作不提供只读提示。`observe` 也返回 `takeover_count`。
 
 以 `tools/list` 返回的 schema 为准。不能把其他 action 的参数混入当前操作，不能调用主屏 Home / Power 等全局按键。
 
@@ -153,7 +154,7 @@ MCP-Protocol-Version: 2025-06-18
 
 ## 输入结果与条件等待
 
-tap_at、long_press_at、swipe_path、scroll_at、input_text、node_action、press_key、`launch_app` 和 `configure_screen` 支持 `observe_after=none/tree/screenshot/both`，默认 `tree`，返回 compact 节点树且不采集图片。结果中 `execution_status=accepted` 表示后端接受输入；`effect_status=verified/unconfirmed` 区分已读回效果与尚未确认。超时或传输不确定可能是 unknown，不能盲目重试。
+tap_at、long_press_at、swipe_path、scroll_at、input_text、node_action、press_key、`touch`、`launch_app` 和 `configure_screen` 支持 `observe_after=none/tree/screenshot/both`，默认 `tree`，返回 compact 节点树且不采集图片。结果中 `execution_status=accepted` 表示后端接受输入；`effect_status=verified/unconfirmed` 区分已读回效果与尚未确认。超时或传输不确定可能是 unknown，不能盲目重试。
 
 输入接受后若新观察失败，仍保留 `ok=true` 与 accepted，同时返回 `observation_status=failed`、`observation_error`。输入不会重放；重新观察并用业务状态决定下一步。操作被拒绝时先处理租约 / 观察 / 参数问题。
 

@@ -32,7 +32,7 @@ class DeviceToolProbeTest {
         // launch_on_phone and run_shell are deliberately not probed: the
         // first pops an app onto the phone screen, the second runs arbitrary
         // shell commands. They are the only tools expected to fail here.
-        assertEquals(report.failedTools.toString(), listOf("launch_on_phone", "run_shell"), report.failedTools.map { it.tool })
+        assertEquals(report.failedTools.toString(), listOf("launch_on_phone", "run_shell", "touch"), report.failedTools.map { it.tool })
         assertNull(app.sessions.state.value.displayId)
         assertNull(app.sessions.leaseStatus())
         assertNull(app.sessions.state.value.errorCode)

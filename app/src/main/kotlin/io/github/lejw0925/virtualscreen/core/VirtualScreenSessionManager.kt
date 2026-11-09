@@ -82,6 +82,12 @@ class VirtualScreenSessionManager(
     val phoneViewerActive: Boolean get() = synchronized(this) { phoneViewers.isNotEmpty() }
     private var latest: ScreenObservation? = null
     private var latestNodes: NodeSnapshot? = null
+    /** Top app on the virtual display, for the Fluid Cloud card. Kept current
+     *  by observe (event-driven, see syncCurrentAppFromWindows) and by the
+     *  foreground service's slow fallback poll (refreshCurrentApp). */
+    private val _currentApp = MutableStateFlow<CurrentApp?>(null)
+    val currentAppFlow: StateFlow<CurrentApp?> = _currentApp.asStateFlow()
+    private var lastTopPackage: String? = null
     private fun update(block: (SessionState) -> SessionState) = synchronized(stateLock) {
         val before = mutableState.value
         val after = block(before)
@@ -394,10 +400,24 @@ class VirtualScreenSessionManager(
             launchMutex.unlock()
         }
     }
-    /** Run a shell command on the phone as root. Requires the control lease. */
+    /** Run a shell command on the phone as root. Requires the control lease.
+     *  Every call is recorded in the activity log (category "shell", visible
+     *  in Settings -> 运行日志) so the user can audit what the agent executed;
+     *  output is truncated to keep the log bounded. */
     suspend fun runShell(owner: String, token: String, command: String, timeoutMs: Int = 30000): OperationEnvelope = mutex.withLock {
         requireLease(owner, token)
-        backend().runShell(requireHandle(), command, timeoutMs).toEnvelope(state.value.sessionId)
+        val result = backend().runShell(requireHandle(), command, timeoutMs)
+        val exitCode = result.values["exit_code"] as? Int
+        val timedOut = result.values["timed_out"] as? Boolean ?: false
+        val output = ((result.values["stdout"] as? String).orEmpty() + (result.values["stderr"] as? String).orEmpty())
+            .take(300).replace("\n", " ").trim()
+        log.record(ActivityLogEntry(
+            category = "shell",
+            operation = command.take(200),
+            status = if (timedOut) "timeout" else "exit=${exitCode ?: "?"}",
+            detail = output.takeIf { it.isNotEmpty() },
+        ))
+        result.toEnvelope(state.value.sessionId)
     }
     /** Phone-side Fluid Cloud action: open the virtual display's current app
      *  on the phone's main display. No lease required — the user taps the
@@ -419,6 +439,32 @@ class VirtualScreenSessionManager(
         val label = result.values["app_label"] as? String ?: return@withLock null
         val packageName = result.values["package_name"] as? String ?: return@withLock null
         CurrentApp(label, packageName)
+    }
+    /** Slow fallback for the Fluid Cloud card: re-resolve the top app from the
+     *  engine and publish it. Called by the foreground service's poll so the
+     *  card still updates when the user switches apps without any observe. */
+    suspend fun refreshCurrentApp() {
+        val app = currentApp()
+        mutex.withLock { _currentApp.value = app; lastTopPackage = app?.packageName }
+    }
+    /** Event-driven sync: called from nodes(), which already holds the mutex.
+     *  Reads the top window's package from the snapshot (data already fetched
+     *  for the observation) and only resolves the label when the package
+     *  actually changed, so the common case costs no extra query. */
+    private fun syncCurrentAppFromWindows(windows: List<WindowSnapshot>) {
+        val top = windows.filter { it.packageName != null && it.type != android.view.WindowManager.LayoutParams.TYPE_INPUT_METHOD }
+            .let { candidates -> candidates.firstOrNull { it.focused } ?: candidates.maxByOrNull { it.layer } }
+        val packageName = top?.packageName
+        if (packageName == null) {
+            if (lastTopPackage != null) { lastTopPackage = null; _currentApp.value = null }
+            return
+        }
+        if (packageName == lastTopPackage) return
+        lastTopPackage = packageName
+        val label = runCatching {
+            context.packageManager.getApplicationLabel(context.packageManager.getApplicationInfo(packageName, 0)).toString()
+        }.getOrElse { packageName }
+        _currentApp.value = CurrentApp(label, packageName)
     }
     suspend fun observe(owner: String, token: String, captureFrame: Boolean = true): Result<OperationEnvelope> = safeResult {
         mutex.withLock {
@@ -470,6 +516,7 @@ class VirtualScreenSessionManager(
             val nodes = backend().nodes(requireHandle(), observationId).getOrThrow()
             verify(owner, token, expected)
             synchronized(stateLock) { latestNodes = nodes }
+            syncCurrentAppFromWindows(nodes.windows)
             update { it.copy(capabilities=it.capabilities.copy(accessibilityNodes=CapabilityStatus.AVAILABLE)) }; nodes
         }
     }
@@ -478,6 +525,21 @@ class VirtualScreenSessionManager(
         val expected = epoch.get()
         try {
             val result = backend().operate(requireHandle(), operation)
+            verify(owner, token, expected)
+            update { it.copy(capabilities = it.capabilities.copy(inputInjection = if (result.ok) CapabilityStatus.AVAILABLE else it.capabilities.inputInjection)) }
+            invalidateObservation()
+            result.toEnvelope(state.value.sessionId)
+        } catch (cancelled: CancellationException) { backend().cancelActive(); invalidateObservation(); throw cancelled }
+    }
+    /** Stateful touch (touch tool). Needs the lease but no observation: a
+     *  hold spans several calls, and the observation from before the hold is
+     *  stale by the time the agent moves. Invalidates the observation like
+     *  operate() does, so the agent re-observes the held state. */
+    suspend fun touch(owner: String, token: String, action: String, x: Int = 0, y: Int = 0, durationMs: Int = 100): OperationEnvelope = mutex.withLock {
+        requireLease(owner, token)
+        val expected = epoch.get()
+        try {
+            val result = backend().operate(requireHandle(), BackendOperation.Touch(action, x, y, durationMs))
             verify(owner, token, expected)
             update { it.copy(capabilities = it.capabilities.copy(inputInjection = if (result.ok) CapabilityStatus.AVAILABLE else it.capabilities.inputInjection)) }
             invalidateObservation()

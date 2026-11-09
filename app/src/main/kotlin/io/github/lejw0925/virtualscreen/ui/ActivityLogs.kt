@@ -227,6 +227,7 @@ private fun categoryIcon(category: String) = when (category.lowercase()) {
     "mcp" -> Icons.Default.Hub
     "tunnel" -> Icons.Default.SettingsEthernet
     "runtime" -> Icons.Default.Memory
+    "shell" -> Icons.Default.Code
     else -> Icons.Default.Description
 }
 

@@ -159,8 +159,23 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
         fun coordinate(name: String, max: Int) = request.getInt(name).also { require(it in 0 until max) { "COORDINATE_OUT_OF_BOUNDS" } }
         if(action == "validate") return geometry.put("ok",true).put("interactive",power.isInteractive)
         val injector = input ?: error("INPUT_UNAVAILABLE")
+        // A stateful touch held by the touch tool owns the pointer stream;
+        // other pointer gestures would corrupt it, so they must release it first.
+        if (action in setOf("tap", "long_press", "long_press_drag", "swipe", "scroll") && injector.hasActiveTouch()) {
+            return JSONObject().put("ok", false).put("code", "ACTIVE_TOUCH")
+                .put("message", "已有按住的手势，先 touch up 或 cancel 再做其他手势。")
+                .put("effect", "unconfirmed")
+        }
         return when (action) {
             "tap" -> injector.execute("tap", coordinate("x", width).toString(), coordinate("y", height).toString())
+            "touch" -> when (val touchAction = request.getString("touch_action")) {
+                "down" -> injector.touchDown(coordinate("x", width), coordinate("y", height))
+                "move" -> injector.touchMove(coordinate("x", width), coordinate("y", height),
+                    request.optInt("durationMs", 100).also { require(it in 0..2_000) { "INVALID_DURATION" } })
+                "up" -> injector.touchUp()
+                "cancel" -> injector.touchCancel()
+                else -> error("INVALID_TOUCH_ACTION")
+            }
             "long_press" -> {
                 val x = coordinate("x", width).toString(); val y = coordinate("y", height).toString()
                 val duration = request.optInt("durationMs", 600).also { require(it in 200..2000) { "INVALID_DURATION" } }
