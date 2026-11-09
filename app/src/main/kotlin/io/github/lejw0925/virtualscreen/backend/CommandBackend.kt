@@ -52,6 +52,10 @@ abstract class CommandBackend(protected val context: Context) : VirtualScreenBac
             .put("ownerPackage", context.packageName))
     }
 
+    override suspend fun runShell(handle: VirtualScreenHandle, command: String, timeoutMs: Int): BackendResult = response {
+        transact(packet(handle, "run_shell").put("command", command).put("timeout_ms", timeoutMs))
+    }
+
     override suspend fun phoneOpenCurrent(handle: VirtualScreenHandle): BackendResult = response {
         transact(packet(handle, "phone_open_current"))
     }

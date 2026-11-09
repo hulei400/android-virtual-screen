@@ -116,7 +116,7 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
         if (action == "probe") return geometry().put("ok", true).put("interactive", power.isInteractive).put("locked", keyguard.isDeviceLocked)
         touched = SystemClock.elapsedRealtime()
         check(allowOff || power.isInteractive && !keyguard.isDeviceLocked) { "SCREEN_OFF_UNAVAILABLE" }
-        if (action !in setOf("launch", "launch_phone", "phone_open_current", "preview")) {
+        if (action !in setOf("launch", "launch_phone", "phone_open_current", "run_shell", "preview")) {
             val tasks = runningTasks()
             check(tasks.any { taskDisplay(it) == current.display.displayId } ||
                 tasks.none { it.taskId in hostedTasks && taskDisplay(it) != current.display.displayId }) { "APP_MOVED_TO_PHONE" }
@@ -194,6 +194,7 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
             "launch" -> launch(request)
             "launch_phone" -> launchOnPhone(request)
             "phone_open_current" -> phoneOpenCurrent(request)
+            "run_shell" -> runShell(request)
             else -> error("UNSUPPORTED_OPERATION")
         }
     }
@@ -309,6 +310,22 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
         return startOnPhone(target, "")
     }
 
+    /** Run an arbitrary shell command on the phone (root) and return its
+     *  exit code, stdout and stderr. Unlike [command], a non-zero exit is
+     *  reported, not thrown, and the timeout is caller-controlled. */
+    private fun runShell(request: JSONObject): JSONObject {
+        val command = request.getString("command")
+        require(command.isNotBlank() && command.length <= 8192 && '\u0000' !in command) { "INVALID_COMMAND" }
+        val timeoutMs = request.optInt("timeout_ms", 30_000).coerceIn(1_000, 120_000)
+        val outcome = runShellCommand(command, timeoutMs)
+        return ok()
+            .put("exit_code", outcome.exitCode)
+            .put("stdout", outcome.stdout)
+            .put("stderr", outcome.stderr)
+            .put("timed_out", outcome.timedOut)
+            .put("truncated", outcome.truncated)
+    }
+
     /** Shared by launchOnPhone and phoneOpenCurrent: start a component on
      *  the phone's default display with NEW_TASK | MULTIPLE_TASK |
      *  EXCLUDE_FROM_RECENTS, then verify a task for its package is there. */
@@ -398,6 +415,33 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
             val drain = Thread { p.inputStream.use { stream -> val buffer = ByteArray(4096); while (true) { val n = stream.read(buffer); if (n < 0) break; if (data.size() + n > 64_000) { p.destroy(); break }; data.write(buffer, 0, n) } } }.apply { isDaemon = true; start() }
             try { check(p.waitFor(8, TimeUnit.SECONDS)) { "DISPLAY_ACTION_TIMEOUT" }; drain.join(1000); check(p.exitValue() == 0) { "DISPLAY_ACTION_FAILED" }; return data.toString("UTF-8") }
             finally { p.destroy() }
+        }
+        private data class ShellOutcome(val exitCode: Int, val stdout: String, val stderr: String, val timedOut: Boolean, val truncated: Boolean)
+        private fun runShellCommand(command: String, timeoutMs: Int): ShellOutcome {
+            val process = ProcessBuilder("/system/bin/sh", "-c", command).start()
+            val outData = java.io.ByteArrayOutputStream()
+            val errData = java.io.ByteArrayOutputStream()
+            val truncated = java.util.concurrent.atomic.AtomicBoolean(false)
+            fun drain(stream: java.io.InputStream, sink: java.io.ByteArrayOutputStream): Thread = Thread {
+                stream.use { input ->
+                    val buffer = ByteArray(4096)
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        if (sink.size() + n > 64_000) { truncated.set(true); process.destroy(); break }
+                        sink.write(buffer, 0, n)
+                    }
+                }
+            }.apply { isDaemon = true; start() }
+            val outThread = drain(process.inputStream, outData)
+            val errThread = drain(process.errorStream, errData)
+            return try {
+                val finished = process.waitFor(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+                if (!finished) process.destroyForcibly()
+                outThread.join(1000); errThread.join(1000)
+                if (!finished) ShellOutcome(-1, outData.toString("UTF-8"), errData.toString("UTF-8"), true, truncated.get())
+                else ShellOutcome(process.exitValue(), outData.toString("UTF-8"), errData.toString("UTF-8"), false, truncated.get())
+            } finally { process.destroy() }
         }
     }
 }

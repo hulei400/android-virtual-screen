@@ -126,7 +126,7 @@ class McpToolsTest {
         val registry=McpToolRegistry(sessions)
         val specs=registry.tools.associateBy { it.name }
         assertEquals(setOf("acquire_control","release_control","request_control","get_status","get_request_receipt",
-            "create_screen","configure_screen","close_screen","list_apps","launch_app","launch_on_phone","observe","tap_at","long_press_at","long_press_drag","swipe_path","scroll_at",
+            "create_screen","configure_screen","close_screen","list_apps","launch_app","launch_on_phone","run_shell","observe","tap_at","long_press_at","long_press_drag","swipe_path","scroll_at",
             "input_text","node_action","press_key","wait"),specs.keys)
         assertFalse(specs.getValue("acquire_control").schema.getJSONObject("properties").has("lease_token"))
         assertTrue(specs.getValue("get_request_receipt").schema.getJSONArray("required").toString().contains("request_id"))
@@ -326,7 +326,7 @@ class McpToolsTest {
         val sessions=VirtualScreenSessionManager(RuntimeEnvironment.getApplication(),FakeBackend(BackendKind.ROOT),FakeBackend(BackendKind.SHIZUKU))
         var language=UiLanguage.ZH_HANS
         val registry=McpToolRegistry(sessions) { language }
-        val names=registry.tools.map { it.name }; assertEquals(21,names.size)
+        val names=registry.tools.map { it.name }; assertEquals(22,names.size)
         for(l in UiLanguage.entries) {
             language=l
             assertEquals(names,registry.tools.map { it.name })

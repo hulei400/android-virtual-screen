@@ -392,6 +392,11 @@ class VirtualScreenSessionManager(
             launchMutex.unlock()
         }
     }
+    /** Run a shell command on the phone as root. Requires the control lease. */
+    suspend fun runShell(owner: String, token: String, command: String, timeoutMs: Int = 30000): OperationEnvelope = mutex.withLock {
+        requireLease(owner, token)
+        backend().runShell(requireHandle(), command, timeoutMs).toEnvelope(state.value.sessionId)
+    }
     /** Phone-side Fluid Cloud action: open the virtual display's current app
      *  on the phone's main display. No lease required — the user taps the
      *  button on the phone, not an MCP client. */

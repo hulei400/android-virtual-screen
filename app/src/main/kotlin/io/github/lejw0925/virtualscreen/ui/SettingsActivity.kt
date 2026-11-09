@@ -356,6 +356,7 @@ private fun mcpToolIcon(tool: String) = when (tool) {
     "node_action" -> Icons.Default.AccountTree
     "get_status" -> Icons.Default.Info
     "get_request_receipt" -> Icons.Default.Description
+    "run_shell" -> Icons.Default.Code
     else -> Icons.Default.Code
 }
 private fun mcpToolLabel(l: UiLanguage,tool: String)=when(tool) {
@@ -370,6 +371,7 @@ private fun mcpToolLabel(l: UiLanguage,tool: String)=when(tool) {
     "list_apps" -> l.text("列出应用","List apps","列出應用程式")
     "launch_app" -> l.text("启动应用","Launch app","啟動應用程式")
     "launch_on_phone" -> l.text("手机屏启动应用","Launch app on phone","在手機螢幕啟動應用程式")
+    "run_shell" -> l.text("执行 Shell 命令","Run shell command","執行 Shell 指令")
     "observe" -> l.text("观察屏幕","Observe display","觀察螢幕")
     "tap_at" -> l.text("点击","Tap","點按")
     "long_press_at" -> l.text("长按","Long press","長按")
@@ -482,9 +484,9 @@ private fun capabilityLabel(l: UiLanguage,c: CapabilityStatus)=when(c) {
                 style=MaterialTheme.typography.headlineSmall,color=MaterialTheme.colorScheme.onSurface)
             Text(l.text("通过 MCP 连接，使用 Root 或 Shizuku 控制 Android 虚拟屏。","Connect over MCP and control an Android virtual display with Root or Shizuku.","透過 MCP 連線，使用 Root 或 Shizuku 控制 Android 虛擬螢幕。"),
                 style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(l.text("0.1.0 · 20 个 MCP 工具 · 独立显示与手机端接管审批",
-                "0.1.0 · 20 MCP tools · isolated display with on-device takeover approval",
-                "0.1.0 · 20 個 MCP 工具 · 獨立顯示與手機端接管審批"),
+            Text(l.text("0.1.0 · 22 个 MCP 工具 · 独立显示与手机端接管审批",
+                "0.1.0 · 22 MCP tools · isolated display with on-device takeover approval",
+                "0.1.0 · 22 個 MCP 工具 · 獨立顯示與手機端接管審批"),
                 style=MaterialTheme.typography.labelLarge,color=MaterialTheme.colorScheme.primary)
         }
         ArrowPreference(title=l.text("仓库","Repository","儲存庫"),summary="lejw0925/android-virtual-screen",

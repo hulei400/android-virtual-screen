@@ -159,6 +159,9 @@ interface VirtualScreenBackend {
     /** Launch a component on the phone's default display, forcing a new task. No virtual-display side effects. */
     suspend fun launchOnPhone(handle: VirtualScreenHandle, component: String, uri: String? = null): BackendResult =
         BackendResult.failure("PHONE_LAUNCH_UNSUPPORTED")
+    /** Run a shell command on the phone and return its exit code, stdout and stderr. The backend decides the identity (root for the Root backend). */
+    suspend fun runShell(handle: VirtualScreenHandle, command: String, timeoutMs: Int = 30000): BackendResult =
+        BackendResult.failure("SHELL_UNSUPPORTED")
     /** Open the virtual display's current app on the phone's default display. The backend resolves the component. */
     suspend fun phoneOpenCurrent(handle: VirtualScreenHandle): BackendResult =
         BackendResult.failure("PHONE_OPEN_UNSUPPORTED")
