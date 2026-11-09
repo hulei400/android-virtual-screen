@@ -135,9 +135,9 @@ class LaunchGuardHook : IXposedHookLoadPackage {
                 ) as? List<ActivityManager.RunningTaskInfo> ?: return false
                 for (task in tasks) {
                     val base = task.baseActivity ?: continue
-                    if (base.packageName == targetPackage &&
-                        task.displayId != Display.DEFAULT_DISPLAY
-                    ) {
+                    if (base.packageName != targetPackage) continue
+                    val displayId = getDisplayId(task) ?: continue
+                    if (displayId != Display.DEFAULT_DISPLAY) {
                         return true
                     }
                 }
@@ -145,6 +145,34 @@ class LaunchGuardHook : IXposedHookLoadPackage {
             } catch (t: Throwable) {
                 XposedBridge.log(t)
                 false
+            }
+        }
+
+        /**
+         * Task display id via reflection: TaskInfo.getDisplayId() is a
+         * hidden framework API, so it does not resolve against the SDK at
+         * compile time (that was the #50 CI failure). The method is public
+         * in the framework, so reflection finds it at runtime. Returns null
+         * on any failure (fail open).
+         */
+        private fun getDisplayId(task: ActivityManager.RunningTaskInfo): Int? {
+            return try {
+                val method = displayIdMethod ?: return null
+                method.invoke(task) as? Int
+            } catch (t: Throwable) {
+                XposedBridge.log(t)
+                null
+            }
+        }
+
+        /** Cached reflective lookup of TaskInfo.getDisplayId(). */
+        private val displayIdMethod: java.lang.reflect.Method? by lazy {
+            try {
+                ActivityManager.RunningTaskInfo::class.java
+                    .getMethod("getDisplayId")
+            } catch (t: Throwable) {
+                XposedBridge.log(t)
+                null
             }
         }
     }
