@@ -159,36 +159,51 @@ class VirtualScreenApplication : Application() {
         })
         runtimeScope.launch {
             var lastDisplayId: Int? = null
+            var lastHeadless: Boolean? = null
             var retryJob: Job? = null
             sessions.state.collect { s ->
                 val id = s.displayId
-                if (id != null && id != lastDisplayId) {
-                    // New display: the float window is the default view.
-                    displayAppearedAt = System.currentTimeMillis()
-                    // A single show() can be lost (a racing hide from the
-                    // viewer resuming, a main-thread timing slip), so retry
-                    // for a few seconds. The retry stops as soon as the
-                    // window is up, or as soon as the user deliberately goes
-                    // fullscreen (that sets the suppression flag, so the loop
-                    // never fights the user's choice).
-                    floatViewer.clearAutoShowSuppression()
-                    retryJob?.cancel()
-                    retryJob = launch {
-                        repeat(6) {
-                            if (floatViewer.isShowing || floatViewer.autoShowSuppressed) {
-                                maybeMoveViewerToBackground()
-                                return@launch
+                val headless = s.config.headless
+                val newDisplay = id != null && id != lastDisplayId
+                // A headless session turned visible (launching an app clears
+                // headless): show the float window for the live display.
+                val becameVisible = id != null && lastHeadless == true && !headless
+                if (newDisplay || becameVisible) {
+                    if (headless) {
+                        // Headless display: command-only work, do not pop up
+                        // the float window. Suppress auto-show so a later
+                        // state emission doesn't bring it up.
+                        retryJob?.cancel()
+                        floatViewer.suppressAutoShow()
+                    } else {
+                        // New display: the float window is the default view.
+                        displayAppearedAt = System.currentTimeMillis()
+                        // A single show() can be lost (a racing hide from the
+                        // viewer resuming, a main-thread timing slip), so retry
+                        // for a few seconds. The retry stops as soon as the
+                        // window is up, or as soon as the user deliberately goes
+                        // fullscreen (that sets the suppression flag, so the loop
+                        // never fights the user's choice).
+                        floatViewer.clearAutoShowSuppression()
+                        retryJob?.cancel()
+                        retryJob = launch {
+                            repeat(6) {
+                                if (floatViewer.isShowing || floatViewer.autoShowSuppressed) {
+                                    maybeMoveViewerToBackground()
+                                    return@launch
+                                }
+                                if (sessions.state.value.displayId == null) return@launch
+                                if (FloatViewer.canDrawOverlays(this@VirtualScreenApplication)) {
+                                    runCatching { floatViewer.show() }
+                                }
+                                delay(700)
                             }
-                            if (sessions.state.value.displayId == null) return@launch
-                            if (FloatViewer.canDrawOverlays(this@VirtualScreenApplication)) {
-                                runCatching { floatViewer.show() }
-                            }
-                            delay(700)
+                            if (floatViewer.isShowing) maybeMoveViewerToBackground()
                         }
-                        if (floatViewer.isShowing) maybeMoveViewerToBackground()
                     }
                 }
                 lastDisplayId = id
+                lastHeadless = headless
             }
         }
     }

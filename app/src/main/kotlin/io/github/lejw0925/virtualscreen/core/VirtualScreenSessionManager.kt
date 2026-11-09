@@ -343,6 +343,12 @@ class VirtualScreenSessionManager(
             var target: VirtualScreenHandle? = null
             val initial = mutex.withLock {
                 requireLease(owner, token)
+                // Launching an app means the user needs to see the screen:
+                // a headless session becomes visible so the float window
+                // appears.
+                if (state.value.config.headless) {
+                    update { it.copy(config = it.config.copy(headless = false)) }
+                }
                 expected = epoch.get()
                 target = requireHandle()
                 val result = backend().launch(target, component, uri)

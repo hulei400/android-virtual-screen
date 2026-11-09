@@ -163,6 +163,23 @@ class McpToolsTest {
         sessions.shutdown()
     }
 
+    @Test fun headlessCreateHidesFloatWindowAndLaunchMakesItVisible() = runBlocking {
+        val sessions=VirtualScreenSessionManager(RuntimeEnvironment.getApplication(),FakeBackend(BackendKind.ROOT),FakeBackend(BackendKind.SHIZUKU))
+        val registry=McpToolRegistry(sessions)
+        val lease=(sessions.acquireLease("agent") as LeaseDecision.Granted).lease
+        suspend fun screen(action: String,extra: JSONObject = JSONObject()) = registry.call("${action}_screen",extra.put("lease_token",lease.token).put("purpose","Verify headless display"),"agent").getJSONObject("structuredContent")
+        assertTrue(screen("create",JSONObject().put("headless",true)).getBoolean("ok"))
+        assertTrue(sessions.state.value.config.headless)
+        val launch=JSONObject().put("purpose","Open the fixture app").put("lease_token",lease.token)
+            .put("component","io.github.lejw0925.virtualscreen.fixture/.FixtureActivity").put("observe_after","none")
+        assertTrue(registry.call("launch_app",launch,"agent").getJSONObject("structuredContent").getBoolean("ok"))
+        assertFalse(sessions.state.value.config.headless)
+        screen("close")
+        assertTrue(screen("create").getBoolean("ok"))
+        assertFalse(sessions.state.value.config.headless)
+        sessions.shutdown()
+    }
+
     @Test fun controlRequestPollRequiresMatchingAuthenticatedSession() = runBlocking {
         val sessions=VirtualScreenSessionManager(RuntimeEnvironment.getApplication(),FakeBackend(BackendKind.ROOT),FakeBackend(BackendKind.SHIZUKU))
         sessions.phoneTakeover()

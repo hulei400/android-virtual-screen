@@ -35,6 +35,10 @@ data class VirtualScreenConfig(
     val rotation: Int = 0,
     val allowScreenOff: Boolean = false,
     val idleTimeoutMinutes: Int = 20,
+    /** True when the display is for command-only work: the float window
+     *  stays hidden instead of popping up on creation. Launching an app
+     *  clears it so the window appears. */
+    val headless: Boolean = false,
 ) {
     init {
         require(width in 320..4096) { "INVALID_WIDTH" }

@@ -36,7 +36,7 @@ class McpToolRegistry(private val sessions: VirtualScreenSessionManager,
     private val selector=JSONObject().put("type","object").put("minProperties",1).put("additionalProperties",false)
         .put("properties",JSONObject(mapOf("resource_id" to string(),"text" to string(),"description" to string(),"class" to string())))
     private val display=mapOf("width" to integer(320,4096),"height" to integer(480,4096),"density" to integer(120,640),"rotation" to integer(0,3),
-        "allow_screen_off" to boolean(),"idle_timeout_minutes" to integer(0,240))
+        "allow_screen_off" to boolean(),"idle_timeout_minutes" to integer(0,240),"headless" to boolean())
     private val xy=mapOf("x" to integer(0,4095),"y" to integer(0,4095))
     // Generate descriptions for every tools/list so a system language change takes effect immediately.
     val tools: List<McpTool> get() {
@@ -50,7 +50,7 @@ class McpToolRegistry(private val sessions: VirtualScreenSessionManager,
                 branches=mapOf("status" to setOf("approval_id"),"cancel" to setOf("approval_id"))),
             tool(l,"get_status",t("查看状态、后端能力和当前控制方，无需租约。","Read status, backend capabilities and the current controller without a lease.","檢視狀態、後端能力和目前控制方，無需租約。"),readOnly=true),
             tool(l,"get_request_receipt",t("用原 JSON-RPC id 字符串查询当前 MCP 会话最近 32 个请求的回执，无需租约。查询不会重发输入。","Look up one of this MCP session's last 32 request receipts by the original JSON-RPC id string. No lease required; never replays input.","用原 JSON-RPC id 字串查詢目前 MCP 工作階段最近 32 個請求的回執，無需租約。查詢不會重播輸入。"),mapOf("request_id" to string(128).put("minLength",1)),setOf("request_id"),readOnly=true),
-            tool(l,"create_screen",t("创建唯一虚拟屏，默认匹配手机可用分辨率和 DPI。只指定宽或高时按比例计算另一边及 DPI。需要控制租约。","Create the isolated display using the phone viewport and DPI by default. A width or height override scales the other dimension and density. Requires control.","建立唯一虛擬螢幕，預設符合手機可用解析度和 DPI。只指定寬或高時按比例計算另一邊及 DPI。需要控制租約。"),lease+display,lease.keys),
+            tool(l,"create_screen",t("创建唯一虚拟屏，默认匹配手机可用分辨率和 DPI。只指定宽或高时按比例计算另一边及 DPI。headless 为真时不弹出悬浮小窗，只跑命令；打开应用时小窗自动出现。需要控制租约。","Create the isolated display using the phone viewport and DPI by default. A width or height override scales the other dimension and density. When headless is true, the floating window stays hidden for command-only work; it appears automatically when an app is launched. Requires control.","建立唯一虛擬螢幕，預設符合手機可用解析度和 DPI。只指定寬或高時按比例計算另一邊及 DPI。headless 為真時不彈出懸浮小窗，只跑指令；開啟應用程式時小窗自動出現。需要控制租約。"),lease+display,lease.keys),
             tool(l,"configure_screen",t("重新配置已有虚拟屏。保留未指定参数；重建显示并使旧观察失效，默认返回重建后的新观察。","Reconfigure an existing display, retaining unspecified settings. Rebuilds the display, invalidates old observations, and returns a fresh post-rebuild observation by default.","重新設定現有虛擬螢幕。保留未指定參數；重建顯示並使舊觀察失效，預設傳回重建後的新觀察。"),lease+display+after,lease.keys),
             tool(l,"close_screen",t("关闭虚拟屏并使旧观察失效。需要当前控制租约。","Close the isolated display and invalidate its observations. Requires the current control lease.","關閉虛擬螢幕並使舊觀察失效。需要目前控制租約。"),lease,lease.keys),
             tool(l,"list_apps",t("查询可启动应用，可按 query 或 package 过滤。需要控制租约，不会启动应用。","List launchable apps, optionally filtering by query or package. Requires control; does not launch apps.","查詢可啟動應用程式，可按 query 或 package 篩選。需要控制租約，不會啟動應用程式。"),lease+mapOf("query" to string(),"package" to string()),lease.keys,readOnly=true),
@@ -297,7 +297,7 @@ class McpToolRegistry(private val sessions: VirtualScreenSessionManager,
         val width=a.optInt("width",if(a.has("height")) (c.width.toDouble()*a.getInt("height")/c.height).toInt().coerceIn(320,4096) else c.width)
         val height=a.optInt("height",if(a.has("width")) (c.height.toDouble()*width/c.width).toInt().coerceIn(480,4096) else c.height)
         val density=a.optInt("density",(c.density.toDouble()*width/c.width).toInt().coerceIn(120,640))
-        return VirtualScreenConfig(width,height,density,a.optInt("rotation",c.rotation),a.optBoolean("allow_screen_off",c.allowScreenOff),a.optInt("idle_timeout_minutes",c.idleTimeoutMinutes))
+        return VirtualScreenConfig(width,height,density,a.optInt("rotation",c.rotation),a.optBoolean("allow_screen_off",c.allowScreenOff),a.optInt("idle_timeout_minutes",c.idleTimeoutMinutes),a.optBoolean("headless",c.headless))
     }
     private fun operation(name: String,a: JSONObject): BackendOperation = when(name) {
         "tap_at" -> BackendOperation.Tap(a.getInt("x"),a.getInt("y"))
