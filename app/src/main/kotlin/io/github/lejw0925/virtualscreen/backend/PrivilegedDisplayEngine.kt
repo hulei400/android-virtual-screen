@@ -117,7 +117,27 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
         touched = SystemClock.elapsedRealtime()
         check(allowOff || power.isInteractive && !keyguard.isDeviceLocked) { "SCREEN_OFF_UNAVAILABLE" }
         if (action !in setOf("launch", "launch_phone", "phone_open_current", "run_shell", "preview", "current_app")) {
-            val tasks = runningTasks()
+            var tasks = runningTasks()
+            val movedToPhone = tasks.none { taskDisplay(it) == current.display.displayId } &&
+                tasks.any { it.taskId in hostedTasks && taskDisplay(it) != current.display.displayId }
+            if (movedToPhone) {
+                // Auto pull-back (user rule 2026-11-09: always pull back on
+                // detect, no asking first): the hosted task was moved to the
+                // phone (e.g. the user tapped the app on the phone). Try to
+                // move it back without killing it, so its state is preserved.
+                // If the move restores a task on the virtual display, the
+                // action continues as normal; otherwise the
+                // APP_MOVED_TO_PHONE error below still fires.
+                val movedTasks = tasks.filter { it.taskId in hostedTasks && taskDisplay(it) != current.display.displayId }
+                for (task in movedTasks) {
+                    val component = task.baseActivity ?: task.topActivity ?: continue
+                    runCatching { tryMoveToVirtual(current.display.displayId, component) }
+                }
+                tasks = runningTasks()
+                if (tasks.any { taskDisplay(it) == current.display.displayId }) {
+                    hostedTasks.addAll(tasks.filter { taskDisplay(it) == current.display.displayId }.map { it.taskId })
+                }
+            }
             check(tasks.any { taskDisplay(it) == current.display.displayId } ||
                 tasks.none { it.taskId in hostedTasks && taskDisplay(it) != current.display.displayId }) { "APP_MOVED_TO_PHONE" }
             if (action in setOf("observe", "validate")) {
@@ -253,6 +273,24 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
             task.baseActivity == target || task.topActivity == target
         val elsewhere = runningTasks().any { matchesTarget(it) && taskDisplay(it) != displayId }
         if (elsewhere) {
+            // Seamless move first: try to bring the task back without killing
+            // it. singleTask activities (e.g. Edge's second window) move as
+            // a whole task, keeping page, unsent text and scroll position.
+            // If the task lands on the virtual display and the phone no
+            // longer has a copy, we're done — no restart, no state loss, no
+            // approval needed.
+            if (tryMoveToVirtual(displayId, target, request.optString("uri"))) {
+                val stillOnPhone = runningTasks().any { matchesTarget(it) && taskDisplay(it) != displayId }
+                if (!stillOnPhone) {
+                    hostedTasks.addAll(runningTasks().filter { matchesTarget(it) && taskDisplay(it) == displayId }.map { it.taskId })
+                    rotation?.apply(info.screenOrientation)
+                    return geometry().put("ok", true).put("component", target.flattenToString()).put("restarted", false).put("moved", true).put("resizeable", resizeable)
+                }
+                // Duplicated: a second instance landed on the virtual display
+                // while the phone keeps the original. Fall through to the
+                // restart path, which kills both copies and reopens cleanly.
+            }
+            // Move failed or duplicated: fall back to the existing restart path.
             if (!request.optBoolean("restartApproved")) return JSONObject().put("ok", false).put("code", "APP_RESTART_CONFIRMATION_REQUIRED").put("packageName", target.packageName).put("component", target.flattenToString())
             check(info.applicationInfo!!.flags and ApplicationInfo.FLAG_SYSTEM == 0 && target.packageName != request.optString("ownerPackage")) { "APP_RESTART_UNSUPPORTED" }
             command(listOf("/system/bin/am", "force-stop", target.packageName))
@@ -443,6 +481,24 @@ internal class PrivilegedDisplayEngine : AutoCloseable {
             return type.getMethod("getTasks", Int::class.javaPrimitiveType).invoke(type.getMethod("getInstance").invoke(null), 1000) as List<ActivityManager.RunningTaskInfo>
         }
         private fun taskDisplay(task: ActivityManager.RunningTaskInfo) = android.app.TaskInfo::class.java.getField("displayId").getInt(task)
+        /** Try to move a component's task onto the virtual display without
+         *  killing it, so its state (page, unsent text, scroll position) is
+         *  preserved. Returns true if a task for the component is on the
+         *  virtual display afterwards. singleTask activities (e.g. Edge's
+         *  second window) move as a whole task; standard launch-mode
+         *  activities may instead create a second instance on the virtual
+         *  display (duplication) or refuse — callers must check whether the
+         *  phone still has a copy. */
+        private fun tryMoveToVirtual(displayId: Int, target: android.content.ComponentName, uri: String = ""): Boolean {
+            val output = runCatching {
+                command(listOf("/system/bin/am", "start", "--display", displayId.toString(), "-f", "0x18800000", "-n", target.flattenToString()) +
+                    if (uri.isNotBlank()) listOf("-a", "android.intent.action.VIEW", "-d", uri) else emptyList())
+            }.getOrNull() ?: return false
+            if ("Error:" in output || "Activity not started" in output) return false
+            return runningTasks().any {
+                (it.baseActivity == target || it.topActivity == target) && taskDisplay(it) == displayId
+            }
+        }
         private fun command(args: List<String>): String {
             val p = ProcessBuilder(args).redirectErrorStream(true).start()
             val data = java.io.ByteArrayOutputStream()
