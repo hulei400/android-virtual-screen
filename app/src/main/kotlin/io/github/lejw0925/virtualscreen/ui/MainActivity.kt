@@ -497,7 +497,6 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
             drag=null
         }
     }
-    LaunchedEffect(drag,hidden,pip) { if(!pip && drag==null && !hidden) { delay(4000); hidden=true } }
     DisposableEffect(host) { onDispose { host.systemGestureExclusionRects=emptyList() } }
     BoxWithConstraints(Modifier.fillMaxSize().imePadding()) {
         val density=LocalDensity.current
@@ -515,8 +514,17 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
         val bottom=maxOf(WindowInsets.displayCutout.getBottom(density),WindowInsets.navigationBarsIgnoringVisibility.getBottom(density))+with(density) { (if(pip) 10.dp else 12.dp).toPx() }
         val maxY=(h-bottom-ch).coerceAtLeast(top); val x=if(pip) ((w-cw)/2f).coerceAtLeast(0f) else if(right) (w-cw).coerceAtLeast(0f) else 0f
         val y=if(pip) maxY else (h*fraction).coerceIn(top,maxY)
-        fun save() { val p=drag ?: return; right=p.x+cw/2>w/2; fraction=if(h>0) (p.y/h).coerceIn(0f,1f) else 0f; prefs.edit().putBoolean("right",right).putFloat("anchor_y",fraction).apply(); drag=null; hidden=true }
-        val dragModifier=Modifier.pointerInput(w,h,cw,ch,top,maxY) { detectDragGestures(onDragStart={ drag=Offset(x,y) },onDragEnd={ save() },onDragCancel={ save() },onDrag={ change,amount -> change.consume(); val p=drag ?: Offset(x,y); drag=Offset((p.x+amount.x).coerceIn(0f,(w-cw).coerceAtLeast(0f)),(p.y+amount.y).coerceIn(top,maxY)) }) }
+        // Drag must survive the width/height animation: the old pointerInput
+        // keys (animated width, measured height) restarted the gesture
+        // detector whenever they changed, cancelling a drag in progress, so
+        // the button stopped following the finger. Keep the keys stable
+        // (screen size only) and read the volatile values through updated
+        // state instead.
+        val cwState=rememberUpdatedState(cw)
+        val maxYState=rememberUpdatedState(maxY)
+        val posState=rememberUpdatedState(Offset(x,y))
+        fun save() { val p=drag ?: return; right=p.x+cwState.value/2>w/2; fraction=if(h>0) (p.y/h).coerceIn(0f,1f) else 0f; prefs.edit().putBoolean("right",right).putFloat("anchor_y",fraction).apply(); drag=null; hidden=true }
+        val dragModifier=Modifier.pointerInput(w,h,top) { detectDragGestures(onDragStart={ drag=posState.value },onDragEnd={ save() },onDragCancel={ save() },onDrag={ change,amount -> change.consume(); val p=drag ?: posState.value; val cwNow=cwState.value; drag=Offset((p.x+amount.x).coerceIn(0f,(w-cwNow).coerceAtLeast(0f)),(p.y+amount.y).coerceIn(top,maxYState.value)) }) }
         val position=drag ?: Offset(x,y)
         Box(Modifier.offset { IntOffset(position.x.roundToInt(),position.y.roundToInt()) }.width(controlWidth).onSizeChanged { measured=it }.onGloballyPositioned { layout ->
             val p=layout.positionInWindow(); host.systemGestureExclusionRects=listOf(android.graphics.Rect(p.x.roundToInt(),p.y.roundToInt(),(p.x+layout.size.width).roundToInt(),(p.y+layout.size.height).roundToInt()))
