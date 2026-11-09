@@ -356,6 +356,9 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
     val toggleMcp=rememberMcpToggle(app,notifications)
     var view by remember { mutableStateOf<LiveDisplayView?>(null) }; var live by remember { mutableStateOf(false) }
     var chooseApp by remember { mutableStateOf(false) }
+    // Card starts collapsed to the round button; any touch on the virtual
+    // display collapses it again (see onManualDown).
+    var cardHidden by remember { mutableStateOf(true) }
     var viewerSize by remember { mutableStateOf(IntSize.Zero) }
     var error by remember { mutableStateOf<String?>(null) }; var busy by remember { mutableStateOf(false) }; var applications by remember { mutableStateOf(emptyList<DiscoveredApplication>()) }
     val task: (suspend () -> Unit) -> Unit={ block -> scope.launch { busy=true; try { withContext(Dispatchers.IO) { app.runtimeWork { app.awaitShutdown(); block() } } } catch(c: CancellationException) { throw c } catch(e: Exception) { error=e.code() } finally { busy=false } } }
@@ -468,6 +471,12 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
         AndroidView(factory={ context -> LiveDisplayView(context).also { view=it } },modifier=Modifier.fillMaxSize(),onRelease={ renderer -> renderer.dispose(); if(view===renderer) view=null },update={ renderer ->
             renderer.onLiveChanged={ live=it }
             renderer.onManualDown={
+                // Any touch on the virtual display collapses the card back
+                // to the round button, so it never blocks what the user is
+                // tapping. This runs even in view-only/PiP mode (no gesture
+                // token there), because the card should get out of the way
+                // whenever the user touches the screen.
+                cardHidden=true
                 // View-only, like PiP, never starts a phone gesture/takeover.
                 if(pip || settings.viewOnly || state.errorCode == "NO_RUNNING_APP") null
                 else { error=null; app.sessions.beginPhoneGesture().token }
@@ -537,7 +546,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
                 error = (server.lastError ?: state.errorCode)?.let { localizedError(l, it) },
             )
         }
-        if(state.displayId!=null) FloatingControls(state,server.running,tool?.purpose,tool?.phase,live,pip,settings.pipEnabled,settings.viewOnly,
+        if(state.displayId!=null) FloatingControls(state,server.running,tool?.purpose,tool?.phase,live,pip,settings.pipEnabled,settings.viewOnly,cardHidden,{ cardHidden=it },
             onToggleViewOnly={ onToggleViewOnly() },
             onSettings=onSettings,onApps={ task { applications=app.sessions.discoverApplications(includeIcons=true).filter { it.exported && it.packageName!=app.packageName }; chooseApp=true } },
             onPip={ app.floatViewer.hide(); onPip() }, onEnd={
@@ -589,19 +598,19 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
 }
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3ExpressiveApi::class)
-@Composable private fun FloatingControls(state: SessionState,mcpRunning: Boolean,purpose: String?,phase: String?,live: Boolean,pip: Boolean,pipEnabled: Boolean,viewOnly: Boolean = false,
+@Composable private fun FloatingControls(state: SessionState,mcpRunning: Boolean,purpose: String?,phase: String?,live: Boolean,pip: Boolean,pipEnabled: Boolean,viewOnly: Boolean = false,hidden: Boolean,onHiddenChange: (Boolean) -> Unit,
     onToggleViewOnly: () -> Unit = {},
     onSettings: () -> Unit,onApps: () -> Unit,onPip: () -> Unit,onEnd: () -> Unit) {
     val l=LocalLanguage.current; val context=LocalContext.current; val host=LocalView.current
     val prefs=remember { context.getSharedPreferences("viewer_controls",0) }
     var right by remember { mutableStateOf(prefs.getBoolean("right",true)) }; var fraction by remember { mutableFloatStateOf(prefs.getFloat("anchor_y",.22f)) }
-    var hidden by remember { mutableStateOf(true) }; var drag by remember { mutableStateOf<Offset?>(null) }; var measured by remember { mutableStateOf(IntSize.Zero) }
+    var drag by remember { mutableStateOf<Offset?>(null) }; var measured by remember { mutableStateOf(IntSize.Zero) }
     val running=phase=="running"
     val accent=when { phase=="failed" -> MaterialTheme.colorScheme.error; running || mcpRunning -> MaterialTheme.colorScheme.primary; else -> MaterialTheme.colorScheme.onSurfaceVariant }
     val status=when { viewOnly && state.lease?.owner != VirtualScreenSessionManager.PHONE_CLIENT -> l.text("只看中","View only","僅觀看"); state.lease?.owner == VirtualScreenSessionManager.PHONE_CLIENT -> l.text("手机接管中","Phone control","手機接管中"); running -> l.text("正在执行","Working","正在執行"); state.lease?.owner != null -> l.text("远程控制中","Remote control active","遠端控制中"); mcpRunning -> l.text("MCP 已就绪","MCP ready","MCP 已就緒"); else -> l.text("本地控制","Local control","本機控制") }
     LaunchedEffect(pip) {
         if(pip) {
-            hidden=false
+            onHiddenChange(false)
             drag=null
         }
     }
@@ -631,7 +640,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
         val cwState=rememberUpdatedState(cw)
         val maxYState=rememberUpdatedState(maxY)
         val posState=rememberUpdatedState(Offset(x,y))
-        fun save() { val p=drag ?: return; right=p.x+cwState.value/2>w/2; fraction=if(h>0) (p.y/h).coerceIn(0f,1f) else 0f; prefs.edit().putBoolean("right",right).putFloat("anchor_y",fraction).apply(); drag=null; hidden=true }
+        fun save() { val p=drag ?: return; right=p.x+cwState.value/2>w/2; fraction=if(h>0) (p.y/h).coerceIn(0f,1f) else 0f; prefs.edit().putBoolean("right",right).putFloat("anchor_y",fraction).apply(); drag=null; onHiddenChange(true) }
         val dragModifier=Modifier.pointerInput(w,h,top) { detectDragGestures(onDragStart={ drag=posState.value },onDragEnd={ save() },onDragCancel={ save() },onDrag={ change,amount -> change.consume(); val p=drag ?: posState.value; val cwNow=cwState.value; drag=Offset((p.x+amount.x).coerceIn(0f,(w-cwNow).coerceAtLeast(0f)),(p.y+amount.y).coerceIn(top,maxYState.value)) }) }
         val position=drag ?: Offset(x,y)
         Box(Modifier.offset { IntOffset(position.x.roundToInt(),position.y.roundToInt()) }.width(controlWidth).onSizeChanged { measured=it }.onGloballyPositioned { layout ->
@@ -675,7 +684,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
             ) { folded ->
                 if(folded) Box(Modifier.then(dragModifier).size(48.dp)) {
                     FilledTonalIconButton(
-                        onClick={ hidden=false },
+                        onClick={ onHiddenChange(false) },
                         shapes=IconButtonShapes(MaterialTheme.shapes.large,MaterialTheme.shapes.medium),
                         modifier=Modifier.fillMaxSize().semantics { contentDescription=status }
                     ) {
@@ -688,7 +697,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
                     Row(Modifier.fillMaxWidth().then(dragModifier).clickable(
                         indication=null,
                         interactionSource=remember { MutableInteractionSource() }
-                    ) { hidden=true },verticalAlignment=Alignment.CenterVertically) {
+                    ) { onHiddenChange(true) },verticalAlignment=Alignment.CenterVertically) {
                         StatusIndicator(running,accent,Modifier.size(16.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(if(running && !purpose.isNullOrBlank()) purpose else status,modifier=Modifier.weight(1f),style=MaterialTheme.typography.bodyMedium,maxLines=2,overflow=TextOverflow.Ellipsis,color=MaterialTheme.colorScheme.onSurface)
