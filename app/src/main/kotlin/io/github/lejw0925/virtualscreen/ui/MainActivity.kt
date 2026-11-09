@@ -3,11 +3,18 @@ package io.github.lejw0925.virtualscreen.ui
 import android.Manifest
 import android.app.Activity
 import android.app.PictureInPictureParams
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.text.Editable
+import android.text.InputType
+import android.text.TextWatcher
 import android.util.Rational
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -353,6 +360,81 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
     var error by remember { mutableStateOf<String?>(null) }; var busy by remember { mutableStateOf(false) }; var applications by remember { mutableStateOf(emptyList<DiscoveredApplication>()) }
     val task: (suspend () -> Unit) -> Unit={ block -> scope.launch { busy=true; try { withContext(Dispatchers.IO) { app.runtimeWork { app.awaitShutdown(); block() } } } catch(c: CancellationException) { throw c } catch(e: Exception) { error=e.code() } finally { busy=false } } }
     fun localInput(op: BackendOperation) { task { app.sessions.phoneTakeover(); phoneInput(app,op) } }
+    // IME bridge for the fullscreen viewer: the system keyboard never appears
+    // for the virtual display's fields on its own, so typing goes through a
+    // hidden 1x1 sink EditText on the phone display, committed to the virtual
+    // display's focused field (same idea as FloatViewer's bridge). The bridge
+    // opens automatically when a field is focused after a tap, or from the
+    // keyboard button on the floating card.
+    var imeSink by remember { mutableStateOf<EditText?>(null) }
+    var imeBridgeOn by remember { mutableStateOf(false) }
+    var suppressImeCommit by remember { mutableStateOf(false) }
+    var imeCommitJob by remember { mutableStateOf<Job?>(null) }
+    var imeCheckJob by remember { mutableStateOf<Job?>(null) }
+    var imeShowJob by remember { mutableStateOf<Job?>(null) }
+    fun closeImeBridge() {
+        if (!imeBridgeOn) return
+        imeBridgeOn = false
+        imeShowJob?.cancel(); imeShowJob = null
+        imeCommitJob?.cancel(); imeCommitJob = null
+        val sink = imeSink
+        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        if (sink != null && imm != null) runCatching { imm.hideSoftInputFromWindow(sink.windowToken, 0) }
+        sink?.clearFocus()
+        suppressImeCommit = true
+        sink?.setText("")
+        suppressImeCommit = false
+    }
+    fun commitImeBridge() {
+        val text = imeSink?.text?.toString() ?: ""
+        imeCommitJob?.cancel(); imeCommitJob = null
+        if (text.isEmpty()) { closeImeBridge(); return }
+        scope.launch {
+            runCatching { phoneInput(app, BackendOperation.Text(text, replace = true)) }
+                .onFailure { app.activityLog.runtime("viewer", "ime_commit", "failed") }
+            closeImeBridge()
+        }
+    }
+    fun openImeBridge(initialText: String) {
+        val sink = imeSink ?: return
+        if (sink.text.toString() != initialText) {
+            suppressImeCommit = true
+            sink.setText(initialText)
+            suppressImeCommit = false
+            sink.setSelection(initialText.length)
+        }
+        if (imeBridgeOn) return
+        imeBridgeOn = true
+        sink.requestFocus()
+        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager ?: return
+        imeShowJob?.cancel()
+        imeShowJob = scope.launch {
+            for (delayMs in listOf(120L, 480L, 900L, 1400L)) {
+                delay(delayMs)
+                if (!imeBridgeOn) return@launch
+                runCatching { imm.showSoftInput(sink, 0) }
+            }
+        }
+    }
+    fun checkImeBridge() {
+        if (settings.viewOnly || pip) { closeImeBridge(); return }
+        imeCheckJob?.cancel()
+        imeCheckJob = scope.launch {
+            delay(300)
+            if (settings.viewOnly || pip) { closeImeBridge(); return@launch }
+            val displayId = state.displayId ?: run { closeImeBridge(); return@launch }
+            val target = runCatching {
+                ScreenAccessibilityService.current
+                    ?.snapshot(displayId, java.util.UUID.randomUUID().toString())
+                    ?.nodes?.firstOrNull { it.editable && it.focused }
+            }.getOrNull()
+            if (target != null) {
+                val rawText = target.text ?: ""
+                val initialText = if (rawText.isNotEmpty() && rawText == target.hintText) "" else rawText
+                openImeBridge(initialText)
+            } else closeImeBridge()
+        }
+    }
     LaunchedEffect(app) {
         withContext(Dispatchers.IO) {
             app.awaitShutdown()
@@ -382,14 +464,15 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
     val background=if(state.displayId!=null) Color.Black else MaterialTheme.colorScheme.background
     WindowAppearance(background)
     Box(Modifier.fillMaxSize().background(background).windowInsetsPadding(if(pip) WindowInsets(0,0,0,0) else WindowInsets.statusBars.union(WindowInsets.displayCutout)).onSizeChanged { if(!pip && !imeVisible) { viewerSize=it; app.settings.setViewerSize(it.width,it.height) } }) {
-        if(state.displayId!=null) AndroidView(factory={ context -> LiveDisplayView(context).also { view=it } },modifier=Modifier.fillMaxSize(),onRelease={ renderer -> renderer.dispose(); if(view===renderer) view=null },update={ renderer ->
+        if(state.displayId!=null) {
+        AndroidView(factory={ context -> LiveDisplayView(context).also { view=it } },modifier=Modifier.fillMaxSize(),onRelease={ renderer -> renderer.dispose(); if(view===renderer) view=null },update={ renderer ->
             renderer.onLiveChanged={ live=it }
             renderer.onManualDown={
                 // View-only, like PiP, never starts a phone gesture/takeover.
                 if(pip || settings.viewOnly || state.errorCode == "NO_RUNNING_APP") null
                 else { error=null; app.sessions.beginPhoneGesture().token }
             }
-            renderer.onManualComplete={ token -> app.sessions.finishPhoneControl(token) }
+            renderer.onManualComplete={ token -> app.sessions.finishPhoneControl(token); checkImeBridge() }
             renderer.onCompatibilityInput={ op -> task { phoneInput(app,op) } }
             renderer.onError={ code -> if(code != "DISPLAY_MIRROR_UNAVAILABLE") {
                 if (error != code) app.activityLog.runtime("display_preview", "error", code)
@@ -397,7 +480,39 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
             } }
             val frame=state.frame
             renderer.setTarget(state.sessionId,app.sessions.liveChannel,LiveGeometry(frame?.width ?: state.config.width,frame?.height ?: state.config.height,state.frameRotation),frame)
-        }) else {
+        })
+        // Hidden 1x1 sink for the fullscreen IME bridge: the phone keyboard
+        // types into this, and the text is committed to the virtual display's
+        // focused field (see openImeBridge).
+        AndroidView(factory={ ctx ->
+            EditText(ctx).apply {
+                layoutParams = android.view.ViewGroup.LayoutParams(1, 1)
+                setBackgroundColor(0x00000000)
+                setTextColor(0x00000000)
+                setCursorVisible(false)
+                inputType = InputType.TYPE_CLASS_TEXT
+                imeOptions = EditorInfo.IME_ACTION_DONE
+                addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                    override fun afterTextChanged(s: Editable?) {
+                        if (suppressImeCommit) return
+                        val text = s?.toString() ?: return
+                        imeCommitJob?.cancel()
+                        imeCommitJob = scope.launch {
+                            delay(200)
+                            if (!imeBridgeOn) return@launch
+                            runCatching { phoneInput(app, BackendOperation.Text(text, replace = true)) }
+                                .onFailure { app.activityLog.runtime("viewer", "ime_commit", "failed") }
+                        }
+                    }
+                })
+                setOnEditorActionListener { _, actionId, _ ->
+                    if (actionId == EditorInfo.IME_ACTION_DONE) { commitImeBridge(); true } else false
+                }
+            }.also { imeSink = it }
+        }, modifier=Modifier.size(1.dp))
+        } else {
             McpHome(
                 server = server,
                 changing = mcpChanging,
@@ -424,7 +539,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
         }
         if(state.displayId!=null) FloatingControls(state,server.running,tool?.purpose,tool?.phase,live,pip,settings.pipEnabled,settings.viewOnly,
             onToggleViewOnly={ onToggleViewOnly() },
-            onSettings=onSettings,onApps={ task { applications=app.sessions.discoverApplications(includeIcons=true).filter { it.exported && it.packageName!=app.packageName }; chooseApp=true } },
+            onSettings=onSettings,onKeyboard={ checkImeBridge() },onApps={ task { applications=app.sessions.discoverApplications(includeIcons=true).filter { it.exported && it.packageName!=app.packageName }; chooseApp=true } },
             onPip={ app.floatViewer.hide(); onPip() }, onEnd={
                 val session = state.sessionId ?: return@FloatingControls
                 chooseApp=false; error=null
@@ -476,7 +591,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable private fun FloatingControls(state: SessionState,mcpRunning: Boolean,purpose: String?,phase: String?,live: Boolean,pip: Boolean,pipEnabled: Boolean,viewOnly: Boolean = false,
     onToggleViewOnly: () -> Unit = {},
-    onSettings: () -> Unit,onApps: () -> Unit,onPip: () -> Unit,onEnd: () -> Unit) {
+    onSettings: () -> Unit,onKeyboard: () -> Unit,onApps: () -> Unit,onPip: () -> Unit,onEnd: () -> Unit) {
     val l=LocalLanguage.current; val context=LocalContext.current; val host=LocalView.current
     val prefs=remember { context.getSharedPreferences("viewer_controls",0) }
     var right by remember { mutableStateOf(prefs.getBoolean("right",true)) }; var fraction by remember { mutableFloatStateOf(prefs.getFloat("anchor_y",.22f)) }
@@ -590,6 +705,8 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
                         ) {
                             floatingAction(Icons.Default.Apps, l.text("应用", "Apps", "應用"),
                                 IconButtonShapes(leadingShapes.shape, leadingShapes.pressedShape), onApps)
+                            floatingAction(Icons.Default.Keyboard, l.text("键盘", "Keyboard", "鍵盤"),
+                                IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onKeyboard)
                             if(pipEnabled) floatingAction(Icons.Default.PictureInPicture, l.text("画中画", "PiP", "子母畫面"),
                                 IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onPip)
                             floatingAction(if(viewOnly) Icons.Default.VisibilityOff else Icons.Default.Visibility, l.text(if(viewOnly) "只看中" else "只看", if(viewOnly) "View only" else "View only", if(viewOnly) "僅觀看" else "僅觀看"),
