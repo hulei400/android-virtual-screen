@@ -44,33 +44,44 @@ class LaunchGuardHook : IXposedHookLoadPackage {
                 "com.android.server.wm.ActivityTaskManagerService",
                 classLoader,
             )
-            // IApplicationThread and ProfilerInfo are hidden framework classes;
-            // resolve them by name instead of importing them.
-            val iApplicationThread = XposedHelpers.findClass(
-                "android.app.IApplicationThread",
-                classLoader,
+            // Find startActivity by scanning declared methods for one that
+            // takes an Intent, instead of pinning the exact 11-arg signature.
+            // The exact form needs hidden parameter types resolved by name
+            // (IApplicationThread, ProfilerInfo), and ProfilerInfo does not
+            // resolve on ColorOS 16 (ClassNotFoundException:
+            // android$os$ProfilerInfo — that was the first live-test failure:
+            // the hook never installed). Prefer the overload with the most
+            // parameters (the full AIDL implementation); fall back to any
+            // overload carrying an Intent.
+            var target: java.lang.reflect.Method? = null
+            var intentIndex = -1
+            for (m in atmsClass.declaredMethods) {
+                if (m.name != "startActivity") continue
+                val params = m.parameterTypes
+                var idx = -1
+                for (i in params.indices) {
+                    if (params[i] == Intent::class.java) {
+                        idx = i
+                        break
+                    }
+                }
+                if (idx < 0) continue
+                if (target == null || params.size > target.parameterTypes.size) {
+                    target = m
+                    intentIndex = idx
+                }
+            }
+            if (target == null || intentIndex < 0) {
+                XposedBridge.log(
+                    "[LaunchGuard] ATMS.startActivity with Intent not found",
+                )
+                return
+            }
+            XposedBridge.hookMethod(target, LaunchGuardCallback(intentIndex))
+            XposedBridge.log(
+                "[LaunchGuard] hooked ATMS.startActivity " +
+                    "(intent arg $intentIndex, ${target.parameterTypes.size} params)",
             )
-            val profilerInfo = XposedHelpers.findClass(
-                "android.os.ProfilerInfo",
-                classLoader,
-            )
-            XposedHelpers.findAndHookMethod(
-                atmsClass,
-                "startActivity",
-                iApplicationThread,
-                String::class.java, // callingPackage
-                String::class.java, // callingFeatureId
-                Intent::class.java, // intent (args[3])
-                String::class.java, // resolvedType
-                android.os.IBinder::class.java, // resultTo
-                String::class.java, // resultWho
-                Int::class.javaPrimitiveType, // requestCode
-                Int::class.javaPrimitiveType, // startFlags
-                profilerInfo,
-                android.os.Bundle::class.java, // bOptions
-                LaunchGuardCallback(),
-            )
-            XposedBridge.log("[LaunchGuard] hooked ATMS.startActivity")
         } catch (t: Throwable) {
             // A missed hook means the feature is silently off, never a crash.
             XposedBridge.log("[LaunchGuard] hook install failed")
@@ -78,10 +89,10 @@ class LaunchGuardHook : IXposedHookLoadPackage {
         }
     }
 
-    private class LaunchGuardCallback : XC_MethodHook() {
+    private class LaunchGuardCallback(private val intentIndex: Int) : XC_MethodHook() {
         override fun beforeHookedMethod(param: MethodHookParam) {
             try {
-                val intent = param.args[3] as? Intent ?: return
+                val intent = param.args[intentIndex] as? Intent ?: return
                 // Only guard launcher taps. The agent's own launches use
                 // `am start --display <virtualId> -n <component>` with no
                 // LAUNCHER category, so they are never rewritten here.
