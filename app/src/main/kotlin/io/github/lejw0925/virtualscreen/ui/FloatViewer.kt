@@ -132,7 +132,8 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private var downRawX = 0f; private var downRawY = 0f; private var downWinX = 0; private var downWinY = 0
     private var downWinH = 0
     private var moved = false; private var resizing = false
-    private var triggerDownX = 0f; private var triggerMoved = false
+    private var triggerDownX = 0f; private var triggerDownY = 0f; private var triggerDownWinY = 0
+    private var triggerMoved = false; private var triggerDragging = false
     private val configCallbacks = object : ComponentCallbacks {
         override fun onConfigurationChanged(newConfig: Configuration) {
             val p = params ?: return
@@ -240,16 +241,44 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     }
     private val triggerTouch = View.OnTouchListener { _, event ->
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { triggerDownX = event.rawX; triggerMoved = false }
+            MotionEvent.ACTION_DOWN -> {
+                triggerDownX = event.rawX; triggerDownY = event.rawY
+                triggerDownWinY = params?.y ?: 0
+                triggerMoved = false; triggerDragging = false
+            }
             MotionEvent.ACTION_MOVE -> {
                 val dx = event.rawX - triggerDownX
+                val dy = event.rawY - triggerDownY
                 val outward = if (collapsedSide == SIDE_LEFT) dx else -dx
-                if (outward > 24f * density) { expand(); triggerMoved = true }
+                if (triggerDragging) {
+                    // Already in vertical-drag mode: keep following the finger.
+                    moveBarTo(triggerDownWinY + dy.roundToInt())
+                } else if (!triggerMoved) {
+                    if (outward > 24f * density) { expand(); triggerMoved = true }
+                    else if (abs(dy) > touchSlopPx && abs(dy) > abs(dx)) {
+                        // Vertical drag dominates: reposition the bar along
+                        // the edge instead of expanding.
+                        triggerDragging = true; triggerMoved = true
+                        moveBarTo(triggerDownWinY + dy.roundToInt())
+                    }
+                }
             }
-            MotionEvent.ACTION_UP -> { if (!triggerMoved) expand() }
-            MotionEvent.ACTION_CANCEL -> {}
+            MotionEvent.ACTION_UP -> { if (!triggerMoved) expand(); triggerDragging = false }
+            MotionEvent.ACTION_CANCEL -> { triggerDragging = false }
         }
         true
+    }
+    /** Move the collapsed trigger bar vertically along its edge. The bar
+     *  stays pinned to the edge (x unchanged); only y follows the finger.
+     *  Also keeps savedY centred on the bar, so expanding restores the
+     *  window at the bar's current height instead of jumping back to where
+     *  it collapsed. */
+    private fun moveBarTo(y: Int) {
+        val p = params ?: return
+        if (!collapsed) return
+        p.y = y.coerceIn(0, (screenH - p.height).coerceAtLeast(0))
+        savedY = (p.y + p.height / 2 - savedH / 2).coerceIn(0, (screenH - savedH).coerceAtLeast(0))
+        updateLayout()
     }
     /** Set when the user deliberately closed the float window or went
      *  fullscreen: the auto-show must not pop it back. Cleared when a new
