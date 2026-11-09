@@ -539,7 +539,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
         }
         if(state.displayId!=null) FloatingControls(state,server.running,tool?.purpose,tool?.phase,live,pip,settings.pipEnabled,settings.viewOnly,
             onToggleViewOnly={ onToggleViewOnly() },
-            onSettings=onSettings,onKeyboard={ checkImeBridge() },onApps={ task { applications=app.sessions.discoverApplications(includeIcons=true).filter { it.exported && it.packageName!=app.packageName }; chooseApp=true } },
+            onSettings=onSettings,onApps={ task { applications=app.sessions.discoverApplications(includeIcons=true).filter { it.exported && it.packageName!=app.packageName }; chooseApp=true } },
             onPip={ app.floatViewer.hide(); onPip() }, onEnd={
                 val session = state.sessionId ?: return@FloatingControls
                 chooseApp=false; error=null
@@ -591,7 +591,7 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable private fun FloatingControls(state: SessionState,mcpRunning: Boolean,purpose: String?,phase: String?,live: Boolean,pip: Boolean,pipEnabled: Boolean,viewOnly: Boolean = false,
     onToggleViewOnly: () -> Unit = {},
-    onSettings: () -> Unit,onKeyboard: () -> Unit,onApps: () -> Unit,onPip: () -> Unit,onEnd: () -> Unit) {
+    onSettings: () -> Unit,onApps: () -> Unit,onPip: () -> Unit,onEnd: () -> Unit) {
     val l=LocalLanguage.current; val context=LocalContext.current; val host=LocalView.current
     val prefs=remember { context.getSharedPreferences("viewer_controls",0) }
     var right by remember { mutableStateOf(prefs.getBoolean("right",true)) }; var fraction by remember { mutableFloatStateOf(prefs.getFloat("anchor_y",.22f)) }
@@ -705,8 +705,6 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
                         ) {
                             floatingAction(Icons.Default.Apps, l.text("应用", "Apps", "應用"),
                                 IconButtonShapes(leadingShapes.shape, leadingShapes.pressedShape), onApps)
-                            floatingAction(Icons.Default.Keyboard, l.text("键盘", "Keyboard", "鍵盤"),
-                                IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onKeyboard)
                             if(pipEnabled) floatingAction(Icons.Default.PictureInPicture, l.text("画中画", "PiP", "子母畫面"),
                                 IconButtonShapes(middleShapes.shape, middleShapes.pressedShape), onPip)
                             floatingAction(if(viewOnly) Icons.Default.VisibilityOff else Icons.Default.Visibility, l.text(if(viewOnly) "只看中" else "只看", if(viewOnly) "View only" else "View only", if(viewOnly) "僅觀看" else "僅觀看"),
