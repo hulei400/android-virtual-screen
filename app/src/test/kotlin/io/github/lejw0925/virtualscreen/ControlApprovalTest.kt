@@ -43,7 +43,7 @@ class ControlApprovalTest {
         approvals.approve(id,always=true)
         assertEquals(generation,sessions.leaseStatus()!!.generation)
         assertFalse(approvals.alwaysAllow.value)
-        sessions.phoneTakeover()
+        sessions.phoneTakeover(); sessions.beginPhoneGesture()
         assertEquals("CONTROL_REQUEST_STALE",approvals.status("agent",id).code)
         assertEquals("pending",approvals.request("agent","Agent","Resume again").values["approval_status"])
     }
@@ -53,7 +53,7 @@ class ControlApprovalTest {
         val sessions = sessions(); sessions.phoneTakeover(); sessions.beginPhoneGesture()
         val approvals = ControlApprovalManager(sessions,saveAlwaysAllow={ saved=it },nowMillis={ now })
         val stale = approvals.request("agent","Agent","Resume").values["approval_id"] as String
-        val phone = sessions.phoneTakeover()
+        val phone = sessions.phoneTakeover(); sessions.beginPhoneGesture()
         approvals.approve(stale,always=true)
         assertEquals(phone,sessions.leaseStatus()); assertFalse(saved)
         val expired = approvals.request("agent","Agent","Retry").values["approval_id"] as String

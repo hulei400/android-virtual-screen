@@ -189,7 +189,7 @@ class McpToolsTest {
         assertEquals("pending",pending.getString("approval_status")); assertFalse(pending.has("lease_token"))
         val id=pending.getString("approval_id")
         sessions.finishPhoneControl(phone.token)
-        approvals.approve(id)
+        approvals.approve(id, releasePhoneViewer=true)
         val args=JSONObject().put("action","status").put("approval_id",id).put("purpose","Check control approval")
         assertEquals("CONTROL_REQUEST_NOT_FOUND",registry.call("request_control",args,"other").getJSONObject("structuredContent").getString("code"))
         assertTrue(registry.call("request_control",args,"agent").getJSONObject("structuredContent").has("lease_token"))
