@@ -311,7 +311,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
      *  no live content. Returns true if the window ends up showing. */
     fun ensureShowing(): Boolean {
         if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { ensureShowing() }; return true }
-        if (root != null && live) return true
+        if (root != null && live && !collapsed) return true
         if (root != null) hide()
         clearAutoShowSuppression()
         return show()

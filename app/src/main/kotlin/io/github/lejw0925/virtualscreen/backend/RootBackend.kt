@@ -76,7 +76,7 @@ class RootBackend(context: Context) : CommandBackend(context) {
         val pending=RootBridgeProvider.expect(nonce)
         try {
             val result=transact(configPacket(config).put("bridgeNonce",nonce).put("ownerUid",android.os.Process.myUid()))
-            if(result.optBoolean("ok")) runCatching { kotlinx.coroutines.withTimeout(2000) { pending.await() } }.getOrNull()?.let { liveChannel=LiveDisplayChannel(result.getString("handleId"),it) }
+            if(result.optBoolean("ok")) runCatching { kotlinx.coroutines.withTimeout(15000) { pending.await() } }.getOrNull()?.let { liveChannel=LiveDisplayChannel(result.getString("handleId"),it) }
             result
         } finally { RootBridgeProvider.forget(nonce) }
     }
