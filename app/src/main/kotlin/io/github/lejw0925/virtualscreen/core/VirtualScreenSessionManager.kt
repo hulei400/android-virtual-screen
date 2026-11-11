@@ -267,8 +267,8 @@ class VirtualScreenSessionManager(
     @Synchronized fun approveControl(clientId: String, expectedGeneration: Long, releasePhoneViewer: Boolean = false, ignoreGesture: Boolean = false, ignoreGeneration: Boolean = false): LeaseDecision {
         val held = leases.snapshot()
         if (held?.generation != expectedGeneration && !ignoreGeneration) return LeaseDecision.Rejected("CONTROL_CHANGED", held?.owner)
-        if (phoneGestures.isNotEmpty() && !ignoreGesture) return LeaseDecision.Rejected("PHONE_GESTURE_ACTIVE", held.owner)
-        if (phoneViewers.isNotEmpty() && !releasePhoneViewer) return LeaseDecision.Rejected("PHONE_VIEWER_ACTIVE", held.owner)
+        if (phoneGestures.isNotEmpty() && !ignoreGesture) return LeaseDecision.Rejected("PHONE_GESTURE_ACTIVE", held?.owner)
+        if (phoneViewers.isNotEmpty() && !releasePhoneViewer) return LeaseDecision.Rejected("PHONE_VIEWER_ACTIVE", held?.owner)
         // Only an explicit decision in the phone dialog may end local viewing.
         if (releasePhoneViewer) phoneViewers.clear()
         val lease = leases.takeover(clientId)
