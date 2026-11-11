@@ -124,7 +124,6 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private var chromeTouch = false
     private var stateJob: Job? = null
     private var previewJob: Job? = null
-    private var diagJob: Job? = null
     private var live = false
     private var collapsed = false
     private var collapsedSide = SIDE_LEFT
@@ -303,44 +302,20 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     fun suppressAutoShow() { autoShowSuppressed = true }
     fun clearAutoShowSuppression() { autoShowSuppressed = false }
     val isShowing: Boolean get() = root != null
-    /** True when the mirror is actually feeding frames. A window can be
-     *  showing (root != null) yet invisible when the fullscreen viewer stole
-     *  the mirror and it never re-attached — that is the state the re-show
-     *  paths must repair, not skip. */
-    val isLive: Boolean get() = live
-    /** Bring the float window up, rebuilding it when it is showing but has
-     *  no live content. Returns true if the window ends up showing. */
-    fun ensureShowing(): Boolean {
-        if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { ensureShowing() }; return true }
-        android.util.Log.d("VS_DIAG", "ensureShowing: root=${root != null} live=$live collapsed=$collapsed suppressed=$autoShowSuppressed")
-        // #63: always rebuild (hide + show) instead of skipping when live.
-        // A system activity on the virtual display (e.g. the DocumentsUI
-        // file picker) makes the compositor hide the whole layer chain
-        // while the app-side Views still report VISIBLE + live. Skipping
-        // the rebuild on "live" leaves that hidden state in place forever;
-        // only a fresh WindowManager add clears it.
-        if (root != null) hide()
-        clearAutoShowSuppression()
-        val ok = show()
-        android.util.Log.d("VS_DIAG", "ensureShowing: show()=$ok")
-        return ok
-    }
     fun toggle() { if (root != null) hide() else show() }
     fun show(): Boolean {
         if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { show() }; return true }
         if (root != null) return true
-        if (autoShowSuppressed) { android.util.Log.d("VS_DIAG", "show: blocked suppressed"); return false }
-        if (!canDrawOverlays(app)) { android.util.Log.d("VS_DIAG", "show: blocked no overlay perm"); return false }
+        if (autoShowSuppressed) return false
+        if (!canDrawOverlays(app)) return false
         val state = app.sessions.state.value
-        if (state.displayId == null) { android.util.Log.d("VS_DIAG", "show: blocked no display"); return false }
+        if (state.displayId == null) return false
         return try {
             buildViews(state)
             app.registerComponentCallbacks(configCallbacks)
             startLoops()
-            android.util.Log.d("VS_DIAG", "show: ok display=${state.displayId} liveChannel=${app.sessions.liveChannel != null}")
             true
         } catch (e: Exception) {
-            android.util.Log.d("VS_DIAG", "show: buildViews threw ${e.javaClass.simpleName}: ${e.message}")
             app.activityLog.failure("float_viewer", e)
             hide()
             false
@@ -352,7 +327,6 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         setControlMode(false)
         stateJob?.cancel(); stateJob = null
         previewJob?.cancel(); previewJob = null
-        diagJob?.cancel(); diagJob = null
         imeCheckJob?.cancel(); imeCheckJob = null
         root?.removeCallbacks(sinkRunnable)
         runCatching { app.unregisterComponentCallbacks(configCallbacks) }
@@ -494,9 +468,6 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         windowManager.addView(rootView, p)
         root = rootView; content = contentView; liveView = viewer; triggerBar = trigger; params = p
         viewer.setResumed(true)
-        rootView.post {
-            android.util.Log.d("VS_DIAG", "built root=${rootView.visibility} ${rootView.width}x${rootView.height} attached=${rootView.isAttachedToWindow} content=${contentView.visibility} ${contentView.width}x${contentView.height} liveView=${viewer.visibility} ${viewer.width}x${viewer.height} clipToOutline=${rootView.clipToOutline}")
-        }
     }
     private fun startLoops() {
         stateJob = scope.launch {
@@ -512,17 +483,6 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             while (isActive) {
                 withContext(Dispatchers.IO) { runCatching { if (app.sessions.state.value.displayId != null) app.sessions.preview() } }
                 delay(if (collapsed) 2000 else if (live) 1000 else 350)
-            }
-        }
-        // #62 rendering diagnostic: dump the real View state every 2s while
-        // showing, so a window that exists but renders nothing can be told
-        // apart by visibility / size / attach / live / frame.
-        diagJob = scope.launch {
-            while (isActive) {
-                delay(2000)
-                val r = root; val c = content; val v = liveView; val p = params
-                val st = app.sessions.state.value
-                android.util.Log.d("VS_DIAG", "viewstate root=${r?.visibility} ${r?.width}x${r?.height} attached=${r?.isAttachedToWindow} content=${c?.visibility} ${c?.width}x${c?.height} liveView=${v?.visibility} ${v?.width}x${v?.height} live=$live isLive=${v?.isLive} collapsed=$collapsed win=${p?.x},${p?.y} ${p?.width}x${p?.height} channel=${app.sessions.liveChannel != null} frame=${st.frame != null} ${st.frame?.width}x${st.frame?.height}")
             }
         }
     }

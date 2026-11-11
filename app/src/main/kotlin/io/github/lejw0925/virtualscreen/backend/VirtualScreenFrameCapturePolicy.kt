@@ -54,7 +54,7 @@ internal class VirtualScreenFrameCapturePolicy {
     }
 
     companion object {
-        const val FRAME_INTERVAL_MS = 50L
+        const val FRAME_INTERVAL_MS = 100L
         // A dead or disconnected viewer cannot leave an encoder running indefinitely.
         const val PREVIEW_LEASE_MS = 1_500L
     }

@@ -72,7 +72,6 @@ internal class LiveDisplayView(context: Context) : FrameLayout(context),SurfaceH
     fun setTarget(id: String?,channel: LiveDisplayChannel?,nextGeometry: LiveGeometry,frame: Bitmap?) {
         bitmap=frame
         if(sessionId != id || target !== channel || geometry != nextGeometry) {
-            android.util.Log.d("VS_DIAG", "setTarget: session=$id channel=${channel != null} geom=${nextGeometry.width}x${nextGeometry.height} frame=${frame != null}")
             cancelGesture(); sessionId=id; target=channel; geometry=nextGeometry; inputReadyAt=Long.MAX_VALUE; attach()
         }
         fallback.invalidate()
@@ -82,12 +81,10 @@ internal class LiveDisplayView(context: Context) : FrameLayout(context),SurfaceH
     override fun surfaceCreated(holder: SurfaceHolder) { ready=true; attach() }
     override fun surfaceChanged(holder: SurfaceHolder,format: Int,width: Int,height: Int) { attach() }
     override fun surfaceDestroyed(holder: SurfaceHolder) { ready=false; cancelGesture(); detach() }
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); android.util.Log.d("VS_DIAG", "liveView attached ${width}x${height}"); if(!disposed) attach() }
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); if(!disposed) attach() }
     private fun attach() {
         val channel=target; val parentSurface=if(ready) live.surfaceControl else null
-        if(disposed || !resumed || channel == null || parentSurface?.isValid != true || width<=0 || height<=0) {
-            if (resumed && !disposed) android.util.Log.d("VS_DIAG", "attach skip: channel=${channel != null} surfaceValid=${parentSurface?.isValid} w=$width h=$height ready=$ready")
-            detach(); return }
+        if(disposed || !resumed || channel == null || parentSurface?.isValid != true || width<=0 || height<=0) { detach(); return }
         val generation=epoch.incrementAndGet(); val w=width; val h=height
         submit {
             if(epoch.get()!=generation) return@submit
@@ -100,15 +97,10 @@ internal class LiveDisplayView(context: Context) : FrameLayout(context),SurfaceH
                 } }
             } catch(e: Exception) { post {
                 if(epoch.get()==generation && !disposed && resumed && ready && target===channel) {
-                    android.util.Log.d("VS_DIAG", "attach threw ${e.javaClass.simpleName}: ${e.message} attempt=$attachAttempt")
                     setLive(false); onError("DISPLAY_MIRROR_UNAVAILABLE")
                     removeCallbacks(retryAttach)
-                    // Keep retrying while the view is resumed: the mirror is
-                    // held by whichever viewer is in front, so the fullscreen
-                    // viewer may lose the first attempts to the float window
-                    // and must re-attach once the float window hides.
-                    if(attachAttempt<20) {
-                        val delay=(50L shl attachAttempt.coerceAtMost(5)).coerceAtMost(1000L)
+                    if(attachAttempt<6) {
+                        val delay=(50L shl attachAttempt.coerceAtMost(4)).coerceAtMost(800L)
                         attachAttempt++
                         postDelayed(retryAttach,delay)
                     }
@@ -122,7 +114,6 @@ internal class LiveDisplayView(context: Context) : FrameLayout(context),SurfaceH
     }
     private fun setLive(value: Boolean) {
         if(isLive==value) return
-        android.util.Log.d("VS_DIAG", "setLive $isLive -> $value")
         cancelGesture(); isLive=value; fallback.visibility=if(value) GONE else VISIBLE
         inputReadyAt=if(resumed && (value || bitmap!=null)) SystemClock.uptimeMillis() else Long.MAX_VALUE
         onLiveChanged(value)
@@ -191,7 +182,6 @@ internal class LiveDisplayView(context: Context) : FrameLayout(context),SurfaceH
     override fun onDetachedFromWindow() {
         // Android detaches AndroidView instances during task/PiP transitions. Keep the
         // worker and target alive so the same view can attach again on the next frame.
-        android.util.Log.d("VS_DIAG", "liveView detached")
         cancelGesture(); detach()
         super.onDetachedFromWindow()
     }

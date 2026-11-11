@@ -206,11 +206,10 @@ open class MainActivity : ComponentActivity() {
     }
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        android.util.Log.d("VS_DIAG", "onUserLeaveHint: approval=${approvalTarget == null} dismissed=$previewDismissed pip=$pip launchingPreview=$launchingPreview openingSettings=$openingSettings display=${app.sessions.state.value.displayId} pipEnabled=${app.settings.flow.value.pipEnabled}")
-        if(approvalTarget == null && !previewDismissed && !pip && !launchingPreview && !openingSettings && app.sessions.state.value.displayId!=null) {
+        if(approvalTarget == null && !previewDismissed && !pip && !launchingPreview && !openingSettings && !app.floatViewer.isShowing && app.sessions.state.value.displayId!=null) {
             // 退回桌面：画中画开着就进画中画，关了就自动弹悬浮窗，不用手动点。
             if(app.settings.flow.value.pipEnabled) enterPreviewPictureInPicture()
-            else if(FloatViewer.canDrawOverlays(app)) { app.floatViewer.ensureShowing() }
+            else if(FloatViewer.canDrawOverlays(app)) { app.floatViewer.clearAutoShowSuppression(); app.floatViewer.show() }
         }
     }
     override fun onStop() {

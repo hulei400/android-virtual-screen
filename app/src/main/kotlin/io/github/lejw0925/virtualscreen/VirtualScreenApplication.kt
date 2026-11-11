@@ -117,9 +117,6 @@ class VirtualScreenApplication : Application() {
     /** The activity currently in front, if any — used to send the fullscreen
      *  viewer to the background when the float window auto-shows on connect. */
     @Volatile private var resumedActivity: Activity? = null
-    /** Pending re-show of the float window after the app goes to the
-     *  background. Cancelled as soon as any activity resumes. */
-    private var showWhenBackgroundedJob: Job? = null
     /** When the current display appeared (epoch ms). MainActivity uses it to
      *  tell an auto-launched viewer (display just created) apart from the
      *  user deliberately opening the app: only the latter hides the float
@@ -151,83 +148,9 @@ class VirtualScreenApplication : Application() {
         // fullscreen viewer happens to be in front, send it to the background —
         // the float window is the default view on connect, not the viewer.
         // Skipped when the overlay permission has not been granted yet.
-        // #63: Home press also rebuilds the float window. The fullscreen
-        // viewer is often never opened in the file-picker flow, so its
-        // onUserLeaveHint and the pause callback never fire; a Home broadcast
-        // is the only signal that reaches us. Rebuilding clears the hidden
-        // layer state a system activity (e.g. the file picker) imposed.
-        registerReceiver(object : android.content.BroadcastReceiver() {
-            override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
-                if (intent?.action != android.content.Intent.ACTION_CLOSE_SYSTEM_DIALOGS) return
-                val reason = intent.getStringExtra("reason")
-                android.util.Log.d("VS_DIAG", "home broadcast reason=$reason")
-                if (reason == "homekey" || reason == "recentapps") {
-                    val state = sessions.state.value
-                    if (state.displayId != null && !state.config.headless) {
-                        runCatching { floatViewer.ensureShowing() }
-                    }
-                }
-            }
-        }, android.content.IntentFilter(android.content.Intent.ACTION_CLOSE_SYSTEM_DIALOGS), android.content.Context.RECEIVER_NOT_EXPORTED)
-        // #64: a system activity on the virtual display (the DocumentsUI file
-        // picker) makes the system hide the float window's whole layer chain
-        // while it is on top — an overlay cannot show it, and rebuilding the
-        // window does not help while the picker stays open. The fullscreen
-        // viewer is not an overlay, so it is not hidden. Open it
-        // automatically when the picker becomes the top app, so the user can
-        // see it and tap a file; the float window comes back once the picker
-        // closes. Only the file picker triggers this, not every system app.
-        runtimeScope.launch {
-            var lastPkg: String? = null
-            sessions.currentAppFlow.collect { app ->
-                val pkg = app?.packageName
-                if (pkg != lastPkg) {
-                    val was = lastPkg; lastPkg = pkg
-                    if (pkg == "com.android.documentsui" && was != pkg) {
-                        val state = sessions.state.value
-                        if (state.displayId != null && !state.config.headless) {
-                            android.util.Log.d("VS_DIAG", "file picker on top -> open fullscreen viewer")
-                            runCatching {
-                                val intent = android.content.Intent(this@VirtualScreenApplication, io.github.lejw0925.virtualscreen.ui.MainActivity::class.java)
-                                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                                startActivity(intent)
-                            }.onFailure { android.util.Log.d("VS_DIAG", "open viewer failed: $it") }
-                        }
-                    }
-                }
-            }
-        }
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
-            override fun onActivityResumed(activity: Activity) {
-                resumedActivity = activity
-                showWhenBackgroundedJob?.cancel()
-            }
-            override fun onActivityPaused(activity: Activity) {
-                if (resumedActivity === activity) {
-                    resumedActivity = null
-                    android.util.Log.d("VS_DIAG", "paused ${activity.javaClass.simpleName} -> schedule reshow in 500ms")
-                    // The app just went to the background: Home, or another
-                    // app covering the viewer — e.g. the system file picker
-                    // launched from the virtual display. Re-show the float
-                    // window so the user can tap back in. MainActivity's
-                    // onUserLeaveHint only fires when the viewer itself is
-                    // left, so it misses the case where the viewer was
-                    // already covered; this catches that case. Delay briefly
-                    // so an activity switch inside the app (viewer ->
-                    // Settings) does not flash the window, and never show
-                    // for a headless (command-only) session.
-                    showWhenBackgroundedJob?.cancel()
-                    showWhenBackgroundedJob = runtimeScope.launch {
-                        delay(500)
-                        val state = sessions.state.value
-                        android.util.Log.d("VS_DIAG", "reshow check: resumed=${resumedActivity == null} display=${state.displayId} headless=${state.config.headless} overlay=${FloatViewer.canDrawOverlays(this@VirtualScreenApplication)} liveChannel=${sessions.liveChannel != null}")
-                        if (resumedActivity == null && state.displayId != null && !state.config.headless
-                            && FloatViewer.canDrawOverlays(this@VirtualScreenApplication)) {
-                            runCatching { floatViewer.ensureShowing() }
-                        }
-                    }
-                }
-            }
+            override fun onActivityResumed(activity: Activity) { resumedActivity = activity }
+            override fun onActivityPaused(activity: Activity) { if (resumedActivity === activity) resumedActivity = null }
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
             override fun onActivityStarted(activity: Activity) {}
             override fun onActivityStopped(activity: Activity) {}
