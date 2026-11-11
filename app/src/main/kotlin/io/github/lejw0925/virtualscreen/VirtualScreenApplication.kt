@@ -117,6 +117,9 @@ class VirtualScreenApplication : Application() {
     /** The activity currently in front, if any — used to send the fullscreen
      *  viewer to the background when the float window auto-shows on connect. */
     @Volatile private var resumedActivity: Activity? = null
+    /** Pending re-show of the float window after the app goes to the
+     *  background. Cancelled as soon as any activity resumes. */
+    private var showWhenBackgroundedJob: Job? = null
     /** When the current display appeared (epoch ms). MainActivity uses it to
      *  tell an auto-launched viewer (display just created) apart from the
      *  user deliberately opening the app: only the latter hides the float
@@ -149,8 +152,35 @@ class VirtualScreenApplication : Application() {
         // the float window is the default view on connect, not the viewer.
         // Skipped when the overlay permission has not been granted yet.
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
-            override fun onActivityResumed(activity: Activity) { resumedActivity = activity }
-            override fun onActivityPaused(activity: Activity) { if (resumedActivity === activity) resumedActivity = null }
+            override fun onActivityResumed(activity: Activity) {
+                resumedActivity = activity
+                showWhenBackgroundedJob?.cancel()
+            }
+            override fun onActivityPaused(activity: Activity) {
+                if (resumedActivity === activity) {
+                    resumedActivity = null
+                    // The app just went to the background: Home, or another
+                    // app covering the viewer — e.g. the system file picker
+                    // launched from the virtual display. Re-show the float
+                    // window so the user can tap back in. MainActivity's
+                    // onUserLeaveHint only fires when the viewer itself is
+                    // left, so it misses the case where the viewer was
+                    // already covered; this catches that case. Delay briefly
+                    // so an activity switch inside the app (viewer ->
+                    // Settings) does not flash the window, and never show
+                    // for a headless (command-only) session.
+                    showWhenBackgroundedJob?.cancel()
+                    showWhenBackgroundedJob = runtimeScope.launch {
+                        delay(500)
+                        val state = sessions.state.value
+                        if (resumedActivity == null && state.displayId != null && !state.config.headless
+                            && !floatViewer.isShowing && FloatViewer.canDrawOverlays(this@VirtualScreenApplication)) {
+                            floatViewer.clearAutoShowSuppression()
+                            runCatching { floatViewer.show() }
+                        }
+                    }
+                }
+            }
             override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
             override fun onActivityStarted(activity: Activity) {}
             override fun onActivityStopped(activity: Activity) {}
