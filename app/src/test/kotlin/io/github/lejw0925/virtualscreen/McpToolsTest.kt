@@ -188,6 +188,7 @@ class McpToolsTest {
         val pending=registry.call("request_control",JSONObject().put("action","request").put("purpose","Resume approved task"),"agent").getJSONObject("structuredContent")
         assertEquals("pending",pending.getString("approval_status")); assertFalse(pending.has("lease_token"))
         val id=pending.getString("approval_id")
+        sessions.endPhoneSession("viewer",retainControl=true)
         approvals.approve(id)
         val args=JSONObject().put("action","status").put("approval_id",id).put("purpose","Check control approval")
         assertEquals("CONTROL_REQUEST_NOT_FOUND",registry.call("request_control",args,"other").getJSONObject("structuredContent").getString("code"))
