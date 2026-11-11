@@ -63,6 +63,24 @@ class McpServerController(context: Context,private val sessions: VirtualScreenSe
     private val clients = ConcurrentHashMap<String,ClientSession>()
     private val clientLock = Any()
     private var allowedOrigins: Set<String> = emptySet()
+    private fun isPrivateLanAddress(address: String): Boolean {
+        // Ktor CIO reports IPv4 peers as IPv4-mapped IPv6 ("::ffff:192.168.1.2").
+        val ip = address.removePrefix("::ffff:").removePrefix("::FFFF:")
+        if (ip.startsWith("10.")) return true
+        if (ip.startsWith("192.168.")) return true
+        if (ip.startsWith("100.")) {
+            // CGNAT 100.64.0.0/10 — Tailscale tailnet addresses (this VM is
+            // 100.92.30.104); the N1 subnet router forwards without SNAT, so
+            // the phone sees the 100.x source, not the N1's LAN address.
+            val second = ip.substringAfter("100.").substringBefore(".").toIntOrNull() ?: return false
+            if (second in 64..127) return true
+        }
+        if (ip.startsWith("172.")) {
+            val second = ip.substringAfter("172.").substringBefore(".").toIntOrNull() ?: return false
+            if (second in 16..31) return true
+        }
+        return false
+    }
     @Synchronized fun start(lan: Boolean = false,port: Int = DEFAULT_PORT,origins: Set<String> = emptySet()): Result<McpServerState> {
         if (server != null && state().running) return Result.success(state())
         if (server != null) stop()
@@ -189,6 +207,20 @@ class McpServerController(context: Context,private val sessions: VirtualScreenSe
     private suspend fun authorize(call: ApplicationCall): Boolean {
         val origin = call.request.headers[HttpHeaders.Origin]
         if (origin != null && origin !in allowedOrigins) { logHttp(call,"authenticate","origin_rejected"); call.respond(HttpStatusCode.Forbidden); return false }
+        // LAN mode: a request from a private LAN address skips the Bearer
+        // check. Direct-LAN clients hold only the surrogate token (the real
+        // token is swapped in only on the Cloudflare egress path), so they
+        // can never pass the Bearer comparison.
+        // NOTE (#70): the peer-IP check alone is the gate — the old lanMode
+        // flag is NOT consulted. The server only binds 0.0.0.0 when lan=true
+        // (otherwise 127.0.0.1, unreachable from LAN), so a private LAN peer
+        // can only reach the server when LAN mode is on. lanMode proved
+        // unreliable in practice (#66–#69 still 401 with lan=true in settings
+        // and the server on *:8732); the peer IP is the ground truth.
+        if (isPrivateLanAddress(peerIp(call))) {
+            logHttp(call,"authenticate","lan_exempt")
+            return true
+        }
         val auth = call.request.headers[HttpHeaders.Authorization]
         val provided = auth?.takeIf { it.startsWith("Bearer ",ignoreCase = true) }?.substring(7)
         if (provided == null || !MessageDigest.isEqual(provided.toByteArray(),tokenStore.token().toByteArray())) {
