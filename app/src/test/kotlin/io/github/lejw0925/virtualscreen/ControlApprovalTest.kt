@@ -17,18 +17,14 @@ class ControlApprovalTest {
     private fun sessions() = VirtualScreenSessionManager(RuntimeEnvironment.getApplication(),
         FakeBackend(BackendKind.ROOT),FakeBackend(BackendKind.SHIZUKU))
 
-    @Test fun approvalRevokesOldLeaseAndRequiresFreshObservation() = runBlocking {
+    @Test fun takeoverAutoApprovesAndRevokesOldLeaseAndRequiresFreshObservation() = runBlocking {
         val sessions = sessions()
         val first = (sessions.acquireLease("first") as LeaseDecision.Granted).lease
         sessions.create(first.owner,first.token)
         val observation = sessions.observe(first.owner,first.token).getOrThrow().values["observation_id"] as String
         val approvals = ControlApprovalManager(sessions)
-        val request = approvals.request("second","Agent","Continue the task")
-        val id = request.values["approval_id"] as String
-        assertEquals("pending",request.values["approval_status"])
-        assertEquals(first.token,sessions.leaseStatus()!!.token)
-        approvals.approve(id)
-        val granted = approvals.status("second",id)
+        val granted = approvals.request("second","Agent","Continue the task")
+        assertEquals("approved",granted.values["approval_status"])
         assertTrue(granted.ok)
         assertEquals("second",sessions.leaseStatus()!!.owner)
         assertEquals("LEASE_REQUIRED",sessions.observe(first.owner,first.token).exceptionOrNull()!!.message)
@@ -37,7 +33,7 @@ class ControlApprovalTest {
     }
 
     @Test fun allowOnceIsSessionBoundAndCannotBeReplayed() {
-        val sessions = sessions(); sessions.phoneTakeover()
+        val sessions = sessions(); sessions.phoneTakeover(); sessions.beginPhoneSession("viewer")
         val approvals = ControlApprovalManager(sessions)
         val id = approvals.request("agent","Agent","Resume").values["approval_id"] as String
         assertEquals("CONTROL_REQUEST_NOT_FOUND",approvals.status("other",id).code)
@@ -54,7 +50,7 @@ class ControlApprovalTest {
 
     @Test fun staleOrExpiredApprovalCannotTransferControlOrPersistPermission() {
         var now = 0L; var saved = false
-        val sessions = sessions(); sessions.phoneTakeover()
+        val sessions = sessions(); sessions.phoneTakeover(); sessions.beginPhoneSession("viewer")
         val approvals = ControlApprovalManager(sessions,saveAlwaysAllow={ saved=it },nowMillis={ now })
         val stale = approvals.request("agent","Agent","Resume").values["approval_id"] as String
         val phone = sessions.phoneTakeover()
@@ -66,26 +62,27 @@ class ControlApprovalTest {
         assertEquals(phone,sessions.leaseStatus()); assertTrue(approvals.pending.value.isEmpty())
     }
 
-    @Test fun alwaysAllowDoesNotInterruptAnActiveGestureOrAnotherAgent() {
+    @Test fun autoApproveTakesOverFromAnotherAgentButNotDuringAnActiveGesture() {
         val sessions = sessions(); sessions.phoneTakeover()
         val approvals = ControlApprovalManager(sessions)
-        val id = approvals.request("agent","Agent","Resume").values["approval_id"] as String
-        approvals.approve(id,always=true)
-        sessions.phoneTakeover()
-        assertEquals("approved",approvals.request("agent","Agent","Resume again").values["approval_status"])
-        val competing = approvals.request("other","Other agent","Competing task")
-        assertEquals("pending",competing.values["approval_status"])
+        // Phone holds the lease: takeover is auto-approved, no prompt.
+        assertEquals("approved",approvals.request("agent","Agent","Resume").values["approval_status"])
+        assertEquals("agent",sessions.leaseStatus()!!.owner)
+        // A competing agent takes over from the first agent, also auto-approved.
+        assertEquals("approved",approvals.request("other","Other agent","Competing task").values["approval_status"])
+        assertEquals("other",sessions.leaseStatus()!!.owner)
+        // But an active phone gesture still blocks the takeover (user is present).
         val phone = sessions.beginPhoneGesture()
-        val gestureRequest = approvals.request("other","Other agent","Resume after gesture")
+        val gestureRequest = approvals.request("agent","Agent","Resume after gesture")
         assertEquals("pending",gestureRequest.values["approval_status"])
         approvals.approve(gestureRequest.values["approval_id"] as String)
         assertEquals(phone,sessions.leaseStatus())
         sessions.finishPhoneControl(phone.token)
-        assertEquals("approved",approvals.request("other","Other agent","Gesture finished").values["approval_status"])
+        assertEquals("approved",approvals.request("agent","Agent","Gesture finished").values["approval_status"])
     }
 
     @Test fun disconnectCancelAndDenyRemovePendingNotifications() {
-        val sessions = sessions(); sessions.phoneTakeover()
+        val sessions = sessions(); sessions.phoneTakeover(); sessions.beginPhoneSession("viewer")
         val approvals = ControlApprovalManager(sessions)
         val id = approvals.request("agent","Agent","Resume").values["approval_id"] as String
         assertEquals(id,approvals.request("agent","Agent","Duplicate request").values["approval_id"])

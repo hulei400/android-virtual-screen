@@ -182,7 +182,7 @@ class McpToolsTest {
 
     @Test fun controlRequestPollRequiresMatchingAuthenticatedSession() = runBlocking {
         val sessions=VirtualScreenSessionManager(RuntimeEnvironment.getApplication(),FakeBackend(BackendKind.ROOT),FakeBackend(BackendKind.SHIZUKU))
-        sessions.phoneTakeover()
+        sessions.phoneTakeover(); sessions.beginPhoneSession("viewer")
         val approvals=ControlApprovalManager(sessions)
         val registry=McpToolRegistry(sessions,approvals)
         val pending=registry.call("request_control",JSONObject().put("action","request").put("purpose","Resume approved task"),"agent").getJSONObject("structuredContent")

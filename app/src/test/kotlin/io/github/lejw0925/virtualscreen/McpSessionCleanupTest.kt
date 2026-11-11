@@ -145,6 +145,7 @@ class McpSessionCleanupTest {
         TestServer(leaseMillis = 600_000).use { test ->
             val client = test.initialize()
             val phone = test.sessions.phoneTakeover()
+            test.sessions.beginPhoneSession("viewer")
             val requested = test.tool(client, "request_control", JSONObject().put("action", "request"))
             val approvalId = requested.body!!.getJSONObject("result").getJSONObject("structuredContent").getString("approval_id")
             assertEquals(1, test.server.approvals.pending.value.size)
