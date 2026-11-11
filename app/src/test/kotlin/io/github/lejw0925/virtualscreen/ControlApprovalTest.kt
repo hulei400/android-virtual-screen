@@ -33,7 +33,7 @@ class ControlApprovalTest {
     }
 
     @Test fun allowOnceIsSessionBoundAndCannotBeReplayed() {
-        val sessions = sessions(); sessions.phoneTakeover(); sessions.beginPhoneSession("viewer")
+        val sessions = sessions(); sessions.phoneTakeover(); sessions.beginPhoneGesture()
         val approvals = ControlApprovalManager(sessions)
         val id = approvals.request("agent","Agent","Resume").values["approval_id"] as String
         assertEquals("CONTROL_REQUEST_NOT_FOUND",approvals.status("other",id).code)
@@ -50,7 +50,7 @@ class ControlApprovalTest {
 
     @Test fun staleOrExpiredApprovalCannotTransferControlOrPersistPermission() {
         var now = 0L; var saved = false
-        val sessions = sessions(); sessions.phoneTakeover(); sessions.beginPhoneSession("viewer")
+        val sessions = sessions(); sessions.phoneTakeover(); sessions.beginPhoneGesture()
         val approvals = ControlApprovalManager(sessions,saveAlwaysAllow={ saved=it },nowMillis={ now })
         val stale = approvals.request("agent","Agent","Resume").values["approval_id"] as String
         val phone = sessions.phoneTakeover()
@@ -82,7 +82,7 @@ class ControlApprovalTest {
     }
 
     @Test fun disconnectCancelAndDenyRemovePendingNotifications() {
-        val sessions = sessions(); sessions.phoneTakeover(); sessions.beginPhoneSession("viewer")
+        val sessions = sessions(); sessions.phoneTakeover(); sessions.beginPhoneGesture()
         val approvals = ControlApprovalManager(sessions)
         val id = approvals.request("agent","Agent","Resume").values["approval_id"] as String
         assertEquals(id,approvals.request("agent","Agent","Duplicate request").values["approval_id"])
@@ -96,57 +96,14 @@ class ControlApprovalTest {
         assertTrue(approvals.pending.value.isEmpty())
         assertEquals("CONTROL_REQUEST_NOT_FOUND",approvals.status("agent",id).code)
     }
-    @Test fun alwaysAllowCannotInterruptAnOpenPhoneViewer() {
+    @Test fun openPhoneViewerDoesNotBlockAutoApprove() {
         val sessions=sessions()
         sessions.beginPhoneSession("viewer")
         val approvals=ControlApprovalManager(sessions,initiallyAlwaysAllow=true)
         val request=approvals.request("agent","Agent","Resume")
-        assertEquals("pending",request.values["approval_status"])
-        approvals.approve(request.values["approval_id"] as String)
-        assertEquals(VirtualScreenSessionManager.PHONE_CLIENT,sessions.leaseStatus()?.owner)
-        sessions.endPhoneSession("viewer")
-        assertEquals("approved",approvals.request("agent","Agent","Resume after PiP").values["approval_status"])
-    }
-
-    @Test fun explicitPhoneDialogCanEndViewingAndApproveWithoutReacquiringPhoneControl() {
-        val sessions = sessions()
-        sessions.beginPhoneSession("viewer")
-        val approvals = ControlApprovalManager(sessions)
-        val id = approvals.request("agent", "Agent", "Continue remotely").values["approval_id"] as String
-
-        assertTrue(approvals.approve(id, releasePhoneViewer = true))
+        assertEquals("approved",request.values["approval_status"])
         assertFalse(sessions.phoneViewerActive)
-        assertEquals("approved", approvals.status("agent", id).values["approval_status"])
-        sessions.endPhoneSession("viewer")
-        assertEquals("agent", sessions.leaseStatus()?.owner)
-        assertFalse(approvals.alwaysAllow.value)
-    }
-
-    @Test fun openingPhoneApprovalKeepsTheOriginalLeaseValidWhenViewerStops() {
-        val sessions = sessions()
-        val phone = sessions.beginPhoneSession("viewer")
-        val approvals = ControlApprovalManager(sessions)
-        val id = approvals.request("agent", "Agent", "Continue remotely").values["approval_id"] as String
-
-        sessions.endPhoneSession("viewer", retainControl = true)
-
-        assertEquals(phone.token, sessions.leaseStatus()?.token)
-        assertTrue(approvals.approve(id, releasePhoneViewer = true))
-        assertEquals("approved", approvals.status("agent", id).values["approval_status"])
-    }
-
-    @Test fun stalePhoneDialogCannotEndViewingOrRememberApproval() {
-        val sessions = sessions()
-        sessions.beginPhoneSession("viewer")
-        val approvals = ControlApprovalManager(sessions)
-        val id = approvals.request("agent", "Agent", "Continue remotely").values["approval_id"] as String
-        val phone = sessions.phoneTakeover()
-
-        assertFalse(approvals.approve(id, always = true, releasePhoneViewer = true))
-        assertTrue(sessions.phoneViewerActive)
-        assertEquals(phone.token, sessions.leaseStatus()?.token)
-        assertEquals(phone.generation, sessions.leaseStatus()?.generation)
-        assertFalse(approvals.alwaysAllow.value)
+        assertEquals("agent",sessions.leaseStatus()?.owner)
     }
 
     @Test fun phoneDialogCannotInterruptAnUnfinishedGesture() {
