@@ -302,6 +302,20 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     fun suppressAutoShow() { autoShowSuppressed = true }
     fun clearAutoShowSuppression() { autoShowSuppressed = false }
     val isShowing: Boolean get() = root != null
+    /** True when the mirror is actually feeding frames. A window can be
+     *  showing (root != null) yet invisible when the fullscreen viewer stole
+     *  the mirror and it never re-attached — that is the state the re-show
+     *  paths must repair, not skip. */
+    val isLive: Boolean get() = live
+    /** Bring the float window up, rebuilding it when it is showing but has
+     *  no live content. Returns true if the window ends up showing. */
+    fun ensureShowing(): Boolean {
+        if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { ensureShowing() }; return true }
+        if (root != null && live) return true
+        if (root != null) hide()
+        clearAutoShowSuppression()
+        return show()
+    }
     fun toggle() { if (root != null) hide() else show() }
     fun show(): Boolean {
         if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { show() }; return true }

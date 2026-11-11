@@ -174,9 +174,8 @@ class VirtualScreenApplication : Application() {
                         delay(500)
                         val state = sessions.state.value
                         if (resumedActivity == null && state.displayId != null && !state.config.headless
-                            && !floatViewer.isShowing && FloatViewer.canDrawOverlays(this@VirtualScreenApplication)) {
-                            floatViewer.clearAutoShowSuppression()
-                            runCatching { floatViewer.show() }
+                            && FloatViewer.canDrawOverlays(this@VirtualScreenApplication)) {
+                            runCatching { floatViewer.ensureShowing() }
                         }
                     }
                 }

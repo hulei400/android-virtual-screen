@@ -206,10 +206,10 @@ open class MainActivity : ComponentActivity() {
     }
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if(approvalTarget == null && !previewDismissed && !pip && !launchingPreview && !openingSettings && !app.floatViewer.isShowing && app.sessions.state.value.displayId!=null) {
+        if(approvalTarget == null && !previewDismissed && !pip && !launchingPreview && !openingSettings && app.sessions.state.value.displayId!=null) {
             // 退回桌面：画中画开着就进画中画，关了就自动弹悬浮窗，不用手动点。
             if(app.settings.flow.value.pipEnabled) enterPreviewPictureInPicture()
-            else if(FloatViewer.canDrawOverlays(app)) { app.floatViewer.clearAutoShowSuppression(); app.floatViewer.show() }
+            else if(FloatViewer.canDrawOverlays(app)) { app.floatViewer.ensureShowing() }
         }
     }
     override fun onStop() {
