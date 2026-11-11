@@ -82,7 +82,7 @@ internal class LiveDisplayView(context: Context) : FrameLayout(context),SurfaceH
     override fun surfaceCreated(holder: SurfaceHolder) { ready=true; attach() }
     override fun surfaceChanged(holder: SurfaceHolder,format: Int,width: Int,height: Int) { attach() }
     override fun surfaceDestroyed(holder: SurfaceHolder) { ready=false; cancelGesture(); detach() }
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); if(!disposed) attach() }
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); android.util.Log.d("VS_DIAG", "liveView attached ${width}x${height}"); if(!disposed) attach() }
     private fun attach() {
         val channel=target; val parentSurface=if(ready) live.surfaceControl else null
         if(disposed || !resumed || channel == null || parentSurface?.isValid != true || width<=0 || height<=0) {
@@ -191,6 +191,7 @@ internal class LiveDisplayView(context: Context) : FrameLayout(context),SurfaceH
     override fun onDetachedFromWindow() {
         // Android detaches AndroidView instances during task/PiP transitions. Keep the
         // worker and target alive so the same view can attach again on the next frame.
+        android.util.Log.d("VS_DIAG", "liveView detached")
         cancelGesture(); detach()
         super.onDetachedFromWindow()
     }

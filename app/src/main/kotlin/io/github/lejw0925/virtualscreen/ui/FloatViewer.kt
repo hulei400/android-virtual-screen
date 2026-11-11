@@ -124,6 +124,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private var chromeTouch = false
     private var stateJob: Job? = null
     private var previewJob: Job? = null
+    private var diagJob: Job? = null
     private var live = false
     private var collapsed = false
     private var collapsedSide = SIDE_LEFT
@@ -346,6 +347,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         setControlMode(false)
         stateJob?.cancel(); stateJob = null
         previewJob?.cancel(); previewJob = null
+        diagJob?.cancel(); diagJob = null
         imeCheckJob?.cancel(); imeCheckJob = null
         root?.removeCallbacks(sinkRunnable)
         runCatching { app.unregisterComponentCallbacks(configCallbacks) }
@@ -487,6 +489,9 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         windowManager.addView(rootView, p)
         root = rootView; content = contentView; liveView = viewer; triggerBar = trigger; params = p
         viewer.setResumed(true)
+        rootView.post {
+            android.util.Log.d("VS_DIAG", "built root=${rootView.visibility} ${rootView.width}x${rootView.height} attached=${rootView.isAttachedToWindow} content=${contentView.visibility} ${contentView.width}x${contentView.height} liveView=${viewer.visibility} ${viewer.width}x${viewer.height} clipToOutline=${rootView.clipToOutline}")
+        }
     }
     private fun startLoops() {
         stateJob = scope.launch {
@@ -502,6 +507,17 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             while (isActive) {
                 withContext(Dispatchers.IO) { runCatching { if (app.sessions.state.value.displayId != null) app.sessions.preview() } }
                 delay(if (collapsed) 2000 else if (live) 1000 else 350)
+            }
+        }
+        // #62 rendering diagnostic: dump the real View state every 2s while
+        // showing, so a window that exists but renders nothing can be told
+        // apart by visibility / size / attach / live / frame.
+        diagJob = scope.launch {
+            while (isActive) {
+                delay(2000)
+                val r = root; val c = content; val v = liveView; val p = params
+                val st = app.sessions.state.value
+                android.util.Log.d("VS_DIAG", "viewstate root=${r?.visibility} ${r?.width}x${r?.height} attached=${r?.isAttachedToWindow} content=${c?.visibility} ${c?.width}x${c?.height} liveView=${v?.visibility} ${v?.width}x${v?.height} live=$live isLive=${v?.isLive} collapsed=$collapsed win=${p?.x},${p?.y} ${p?.width}x${p?.height} channel=${app.sessions.liveChannel != null} frame=${st.frame != null} ${st.frame?.width}x${st.frame?.height}")
             }
         }
     }
