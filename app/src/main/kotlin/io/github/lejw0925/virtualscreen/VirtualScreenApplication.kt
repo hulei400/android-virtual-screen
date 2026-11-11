@@ -169,6 +169,34 @@ class VirtualScreenApplication : Application() {
                 }
             }
         }, android.content.IntentFilter(android.content.Intent.ACTION_CLOSE_SYSTEM_DIALOGS), android.content.Context.RECEIVER_NOT_EXPORTED)
+        // #64: a system activity on the virtual display (the DocumentsUI file
+        // picker) makes the system hide the float window's whole layer chain
+        // while it is on top — an overlay cannot show it, and rebuilding the
+        // window does not help while the picker stays open. The fullscreen
+        // viewer is not an overlay, so it is not hidden. Open it
+        // automatically when the picker becomes the top app, so the user can
+        // see it and tap a file; the float window comes back once the picker
+        // closes. Only the file picker triggers this, not every system app.
+        runtimeScope.launch {
+            var lastPkg: String? = null
+            sessions.currentAppFlow.collect { app ->
+                val pkg = app?.packageName
+                if (pkg != lastPkg) {
+                    val was = lastPkg; lastPkg = pkg
+                    if (pkg == "com.android.documentsui" && was != pkg) {
+                        val state = sessions.state.value
+                        if (state.displayId != null && !state.config.headless) {
+                            android.util.Log.d("VS_DIAG", "file picker on top -> open fullscreen viewer")
+                            runCatching {
+                                val intent = android.content.Intent(this@VirtualScreenApplication, io.github.lejw0925.virtualscreen.ui.MainActivity::class.java)
+                                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                                startActivity(intent)
+                            }.onFailure { android.util.Log.d("VS_DIAG", "open viewer failed: $it") }
+                        }
+                    }
+                }
+            }
+        }
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {
                 resumedActivity = activity
