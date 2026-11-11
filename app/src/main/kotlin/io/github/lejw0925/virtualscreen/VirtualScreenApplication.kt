@@ -151,6 +151,24 @@ class VirtualScreenApplication : Application() {
         // fullscreen viewer happens to be in front, send it to the background —
         // the float window is the default view on connect, not the viewer.
         // Skipped when the overlay permission has not been granted yet.
+        // #63: Home press also rebuilds the float window. The fullscreen
+        // viewer is often never opened in the file-picker flow, so its
+        // onUserLeaveHint and the pause callback never fire; a Home broadcast
+        // is the only signal that reaches us. Rebuilding clears the hidden
+        // layer state a system activity (e.g. the file picker) imposed.
+        registerReceiver(object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
+                if (intent?.action != android.content.Intent.ACTION_CLOSE_SYSTEM_DIALOGS) return
+                val reason = intent.getStringExtra("reason")
+                android.util.Log.d("VS_DIAG", "home broadcast reason=$reason")
+                if (reason == "homekey" || reason == "recentapps") {
+                    val state = sessions.state.value
+                    if (state.displayId != null && !state.config.headless) {
+                        runCatching { floatViewer.ensureShowing() }
+                    }
+                }
+            }
+        }, android.content.IntentFilter(android.content.Intent.ACTION_CLOSE_SYSTEM_DIALOGS), android.content.Context.RECEIVER_NOT_EXPORTED)
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {
                 resumedActivity = activity

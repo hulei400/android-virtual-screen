@@ -313,7 +313,12 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     fun ensureShowing(): Boolean {
         if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { ensureShowing() }; return true }
         android.util.Log.d("VS_DIAG", "ensureShowing: root=${root != null} live=$live collapsed=$collapsed suppressed=$autoShowSuppressed")
-        if (root != null && live && !collapsed) return true
+        // #63: always rebuild (hide + show) instead of skipping when live.
+        // A system activity on the virtual display (e.g. the DocumentsUI
+        // file picker) makes the compositor hide the whole layer chain
+        // while the app-side Views still report VISIBLE + live. Skipping
+        // the rebuild on "live" leaves that hidden state in place forever;
+        // only a fresh WindowManager add clears it.
         if (root != null) hide()
         clearAutoShowSuppression()
         val ok = show()
