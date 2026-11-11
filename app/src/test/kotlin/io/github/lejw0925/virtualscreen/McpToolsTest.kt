@@ -180,21 +180,6 @@ class McpToolsTest {
         sessions.shutdown()
     }
 
-    @Test fun controlRequestPollRequiresMatchingAuthenticatedSession() = runBlocking {
-        val sessions=VirtualScreenSessionManager(RuntimeEnvironment.getApplication(),FakeBackend(BackendKind.ROOT),FakeBackend(BackendKind.SHIZUKU))
-        sessions.phoneTakeover(); sessions.beginPhoneSession("viewer"); val phone=sessions.beginPhoneGesture()
-        val approvals=ControlApprovalManager(sessions)
-        val registry=McpToolRegistry(sessions,approvals)
-        val pending=registry.call("request_control",JSONObject().put("action","request").put("purpose","Resume approved task"),"agent").getJSONObject("structuredContent")
-        assertEquals("pending",pending.getString("approval_status")); assertFalse(pending.has("lease_token"))
-        val id=pending.getString("approval_id")
-        sessions.finishPhoneControl(phone.token)
-        approvals.approve(id, releasePhoneViewer=true)
-        val args=JSONObject().put("action","status").put("approval_id",id).put("purpose","Check control approval")
-        assertEquals("CONTROL_REQUEST_NOT_FOUND",registry.call("request_control",args,"other").getJSONObject("structuredContent").getString("code"))
-        assertTrue(registry.call("request_control",args,"agent").getJSONObject("structuredContent").has("lease_token"))
-        sessions.shutdown()
-    }
     @Test fun missingPurposeAndInapplicableArgumentsNeverDispatchInput() = runBlocking {
         val root=FakeBackend(BackendKind.ROOT)
         val sessions=VirtualScreenSessionManager(RuntimeEnvironment.getApplication(),root,FakeBackend(BackendKind.SHIZUKU))

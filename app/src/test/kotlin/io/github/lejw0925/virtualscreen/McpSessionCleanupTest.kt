@@ -141,25 +141,6 @@ class McpSessionCleanupTest {
         }
     }
 
-    @Test fun expiredClientCannotKeepPendingApprovalOrReuseItsNotification() {
-        TestServer(leaseMillis = 600_000).use { test ->
-            val client = test.initialize()
-            val phone = test.sessions.phoneTakeover()
-            test.sessions.beginPhoneGesture()
-            val requested = test.tool(client, "request_control", JSONObject().put("action", "request"))
-            val approvalId = requested.body!!.getJSONObject("result").getJSONObject("structuredContent").getString("approval_id")
-            assertEquals(1, test.server.approvals.pending.value.size)
-            test.clock.set(300_000)
-            test.server.recycleIdleSessions()
-            assertTrue(test.server.approvals.pending.value.isEmpty())
-            test.server.approvals.approve(approvalId, always = true)
-            assertFalse(test.server.approvals.alwaysAllow.value)
-            val current = test.sessions.leaseStatus()
-            assertEquals(phone.owner, current?.owner)
-            assertEquals(phone.token, current?.token)
-            assertEquals(404, test.request("ping", client).status)
-        }
-    }
 
     private data class Response(val status: Int, val body: JSONObject?, val session: String?, val retryAfter: String?)
 

@@ -41,16 +41,11 @@ class ControlApprovalManager(
         // Auto-approve by default: a valid Bearer token is the authorization.
         // Unattended tasks must not stall on a tap nobody is there to make.
         // Take over even when the phone app is open in fullscreen (release
-        // the phone viewer). A phone gesture is brief — the user is usually
-        // just tapping through another app — so if one is active right now,
-        // retry a few times before falling back to a pending request.
-        var transfer = sessions.approveControl(owner, held.generation, releasePhoneViewer = true)
-        var attempts = 0
-        while (transfer is LeaseDecision.Rejected && transfer.code == "PHONE_GESTURE_ACTIVE" && attempts < 6) {
-            Thread.sleep(500)
-            attempts++
-            transfer = sessions.approveControl(owner, held.generation, releasePhoneViewer = true)
-        }
+        // the phone viewer) and even while the user is touching the screen —
+        // the user is usually just tapping through another app, and the
+        // takeover must not wait on that. Only a changed lease generation
+        // still falls through to a pending request.
+        val transfer = sessions.approveControl(owner, held.generation, releasePhoneViewer = true, ignoreGesture = true)
         if (transfer is LeaseDecision.Granted) return granted(transfer.lease)
         requests.values.firstOrNull { it.owner == owner && it.status == "pending" }?.let { return result(it) }
         while (requests.size >= 32) requests.remove(requests.keys.first())
