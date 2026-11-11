@@ -121,8 +121,15 @@ class LaunchGuardHook : IXposedHookLoadPackage {
          * before-hook, before ActivityStarter acquires its global lock, so
          * the Binder round-trip cannot deadlock. Any failure returns false
          * (fail open: the launch proceeds as stock).
+         *
+         * Fast path: when no non-primary display exists at all (the usual
+         * case when Muse is not connected and no virtual display is up),
+         * return false immediately without enumerating tasks. Enumerating
+         * every running task on every launcher tap is what made desktop
+         * launches stutter when nothing virtual was even running.
          */
         private fun hasTaskOnOtherDisplay(targetPackage: String): Boolean {
+            if (!hasNonPrimaryDisplay()) return false
             return try {
                 // ActivityTaskManager is a hidden framework API; reach it
                 // by reflection so the code still compiles against the SDK.
@@ -156,6 +163,25 @@ class LaunchGuardHook : IXposedHookLoadPackage {
             } catch (t: Throwable) {
                 XposedBridge.log(t)
                 false
+            }
+        }
+
+        /**
+         * True when any display other than the primary (display 0) exists.
+         * Uses DisplayManagerGlobal (a cheap in-process call in
+         * system_server) instead of enumerating tasks. Any failure returns
+         * true (fail open to the full task check, never skip the guard on
+         * a lookup error).
+         */
+        private fun hasNonPrimaryDisplay(): Boolean {
+            return try {
+                val dmgClass = Class.forName("android.hardware.display.DisplayManagerGlobal")
+                val dmg = dmgClass.getMethod("getInstance").invoke(null) ?: return true
+                val ids = dmgClass.getMethod("getDisplayIds").invoke(dmg) as? IntArray ?: return true
+                ids.any { it != Display.DEFAULT_DISPLAY }
+            } catch (t: Throwable) {
+                XposedBridge.log(t)
+                true
             }
         }
 
