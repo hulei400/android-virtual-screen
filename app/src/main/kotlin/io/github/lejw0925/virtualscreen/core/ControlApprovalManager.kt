@@ -41,11 +41,13 @@ class ControlApprovalManager(
         // Auto-approve by default: a valid Bearer token is the authorization.
         // Unattended tasks must not stall on a tap nobody is there to make.
         // Take over even when the phone app is open in fullscreen (release
-        // the phone viewer) and even while the user is touching the screen —
-        // the user is usually just tapping through another app, and the
-        // takeover must not wait on that. Only a changed lease generation
-        // still falls through to a pending request.
-        val transfer = sessions.approveControl(owner, held.generation, releasePhoneViewer = true, ignoreGesture = true)
+        // the phone viewer), even while the user is touching the screen, and
+        // even if the lease generation changed hands in the meantime — the
+        // Bearer token, not the generation, is the authorization. The manual
+        // phone dialog still checks the generation; the auto-approve path
+        // does not. Only a missing lease still falls through to a pending
+        // request.
+        val transfer = sessions.approveControl(owner, held.generation, releasePhoneViewer = true, ignoreGesture = true, ignoreGeneration = true)
         if (transfer is LeaseDecision.Granted) return granted(transfer.lease)
         requests.values.firstOrNull { it.owner == owner && it.status == "pending" }?.let { return result(it) }
         while (requests.size >= 32) requests.remove(requests.keys.first())
