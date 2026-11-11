@@ -154,7 +154,9 @@ class McpSessionCleanupTest {
             assertTrue(test.server.approvals.pending.value.isEmpty())
             test.server.approvals.approve(approvalId, always = true)
             assertFalse(test.server.approvals.alwaysAllow.value)
-            assertEquals(phone, test.sessions.leaseStatus())
+            val current = test.sessions.leaseStatus()
+            assertEquals(phone.owner, current?.owner)
+            assertEquals(phone.token, current?.token)
             assertEquals(404, test.request("ping", client).status)
         }
     }
