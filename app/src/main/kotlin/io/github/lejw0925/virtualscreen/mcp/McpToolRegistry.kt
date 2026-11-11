@@ -67,8 +67,8 @@ class McpToolRegistry(private val sessions: VirtualScreenSessionManager,
             tool(l,"touch",t("按住、拖动、松开：down 在 x/y 按住不放，move 拖到 x/y，up 松开，cancel 取消。按住可以跨多次调用，适合“按住等界面变化再拖”的手势；down/move 需要 x/y，up/cancel 不需要。按住期间其他手势会被拒绝。需要已有虚拟屏会话，不需要观察。","Press, drag and release: down holds at x/y, move drags to x/y, up releases, cancel aborts. A hold spans several calls — press, wait for the UI to change, then drag. down/move need x/y; up/cancel do not. Other gestures are rejected while a touch is held. Requires an active virtual display session; no observation needed.","按住、拖動、鬆開：down 在 x/y 按住不放，move 拖到 x/y，up 鬆開，cancel 取消。按住可以跨多次呼叫，適合「按住等介面變化再拖」的手勢；down/move 需要 x/y，up/cancel 不需要。按住期間其他手勢會被拒絕。需要已有虛擬螢幕工作階段，不需要觀察。"),lease+after+mapOf("action" to choice("down","move","up","cancel"),"x" to integer(0,4095),"y" to integer(0,4095),"duration_ms" to integer(0,2000)),lease.keys+setOf("action")),
             tool(l,"scroll_at",t("在虚拟屏 x/y 滚动。delta 为-20至20的非零整数，正数向下。消耗当前观察。","Scroll at display coordinates x/y. delta is a nonzero integer from -20 to 20; positive scrolls down. Consumes the observation.","在虛擬螢幕 x/y 捲動。delta 為-20至20的非零整數，正數向下。消耗目前觀察。"),observed+after+xy+("delta" to integer(-20,20).put("not",JSONObject().put("const",0))),observed.keys+xy.keys+"delta"),
             tool(l,"input_text",t("向虚拟屏焦点编辑框输入 Unicode 文字。replace=true 替换全部。","Insert Unicode into the virtual display's focused editor. replace=true replaces all text.","向虛擬螢幕焦點編輯框輸入 Unicode 文字。replace=true 取代全部。"),observed+after+mapOf("text" to string(20000),"replace" to boolean()),observed.keys+"text"),
-            tool(l,"node_action",t("对当前观察中的节点操作。node_id 和 selector 二选一；selector 字段为精确匹配，必须唯一，歧义或截断会拒绝。set_text 必填 value，可设为空。不会降级到主屏。observe_after 可返回新观察，接受输入后观察失败不会重放输入。","Act on the current observation. Supply exactly one of node_id/selector. Selector fields match exactly and must identify one node; ambiguity/truncation is rejected. set_text requires value and allows empty text. No phone-display fallback. observe_after returns a fresh observation; a failed observation never replays accepted input.","對目前觀察中的節點操作。node_id 和 selector 二選一；selector 欄位為精確比對，必須唯一，歧義或截斷會拒絕。set_text 必填 value，可設為空。不會降級到主螢幕。observe_after 可傳回新觀察，接受輸入後觀察失敗不會重播輸入。"),
-                observed+after+mapOf("node_id" to string(),"selector" to selector,"action" to choice("click","long_click","focus","scroll_forward","scroll_backward","set_text"),"value" to string(20000)),observed.keys+"action",branches=mapOf("set_text" to setOf("value"))),
+            tool(l,"node_action",t("对当前观察中的节点操作。node_id 和 selector 二选一；selector 字段为精确匹配，必须唯一，歧义或截断会拒绝。用 selector 时可不传 observation_id，服务端先重新观察再操作，一次调用完成观察+操作并返回新观察；用 node_id 时仍需传 observation_id。set_text 必填 value，可设为空。不会降级到主屏。observe_after 可返回新观察，接受输入后观察失败不会重放输入。","Act on the current observation. Supply exactly one of node_id/selector. Selector fields match exactly and must identify one node; ambiguity/truncation is rejected. With a selector, observation_id is optional: the server observes fresh first, so one call does observe + act and returns the new observation. With node_id, observation_id is still required. set_text requires value and allows empty text. No phone-display fallback. observe_after returns a fresh observation; a failed observation never replays accepted input.","對目前觀察中的節點操作。node_id 和 selector 二選一；selector 欄位為精確比對，必須唯一，歧義或截斷會拒絕。用 selector 時可不傳 observation_id，服務端先重新觀察再操作，一次呼叫完成觀察+操作並傳回新觀察；用 node_id 時仍需傳 observation_id。set_text 必填 value，可設為空。不會降級到主螢幕。observe_after 可傳回新觀察，接受輸入後觀察失敗不會重播輸入。"),
+                observed+after+mapOf("node_id" to string(),"selector" to selector,"action" to choice("click","long_click","focus","scroll_forward","scroll_backward","set_text"),"value" to string(20000)),(observed.keys-"observation_id")+"action",branches=mapOf("set_text" to setOf("value"))),
             tool(l,"press_key",t("发送虚拟屏导航或编辑按键。默认返回键 4；禁止电源、主屏等全局按键。","Send a display-scoped navigation or editing key. Default: Back (4). Global power/home keys are rejected.","傳送虛擬螢幕導覽或編輯按鍵。預設返回鍵 4；禁止電源、主螢幕等全域按鍵。"),observed+after+("key_code" to integer(4,123).put("enum",JSONArray(DisplayKeys.codes))),observed.keys),
             tool(l,"wait",t("最多等待 30 秒。delay 返回 compact 节点树且不截图；frame_changed 需 fingerprint；node_text 需 text；node_present/absent 需 selector；app_foreground 需 package；ui_stable 要求画面持续稳定 500 毫秒。节点条件不截图。返回新观察及 condition_matched；超时返回当前状态，取消后重新观察。","Wait up to 30 seconds. delay returns a compact node tree without an image; frame_changed requires fingerprint; node_text requires text; node_present/absent requires selector; app_foreground requires package; ui_stable requires 500 ms of unchanged frames. Node conditions avoid screenshots. Return a fresh observation and condition_matched; timeout returns current state, and cancellation requires re-observation.","最多等待 30 秒。delay 傳回 compact 節點樹且不截圖；frame_changed 需 fingerprint；node_text 需 text；node_present/absent 需 selector；app_foreground 需 package；ui_stable 要求畫面持續穩定 500 毫秒。節點條件不截圖。傳回新觀察及 condition_matched；逾時傳回目前狀態，取消後重新觀察。"),
                 lease+mapOf("condition" to choice("delay","frame_changed","node_text","node_present","node_absent","app_foreground","ui_stable"),"text" to string(),"case_sensitive" to boolean(),"fingerprint" to string(),"selector" to selector,"package" to string(),"timeout_ms" to integer(0,30000)),lease.keys,readOnly=true)
@@ -122,7 +122,7 @@ class McpToolRegistry(private val sessions: VirtualScreenSessionManager,
             current.update { previous ->
                 if(previous?.phase != "running" || (previous.owner == owner && name !in setOf("get_status","get_request_receipt"))) activity else previous
             }
-            val token=args.optString("lease_token"); val observation=args.optString("observation_id")
+            val token=args.optString("lease_token"); var observation=args.optString("observation_id")
             val result=when(name) {
                 "acquire_control" -> leaseResult(sessions.acquireLease(owner))
                 "release_control" -> when(val decision=sessions.releaseLease(owner,token)) {
@@ -170,6 +170,15 @@ class McpToolRegistry(private val sessions: VirtualScreenSessionManager,
                 },args.optString("format","compact"))
                 "wait" -> waitFor(owner,token,args)
                 else -> {
+                    // Selector actions may skip the separate observe call: observe
+                    // fresh here, resolve the selector against it, act, and return
+                    // the post-action observation below. One MCP round trip instead
+                    // of two. node_id still needs the caller's observation_id.
+                    if(name=="node_action" && args.has("selector") && observation.isBlank()) {
+                        val fresh=observe(owner,token,"tree")
+                        check(fresh.ok) { fresh.code ?: "BACKEND_OPERATION_FAILED" }
+                        observation=fresh.values.getValue("observation_id") as String
+                    }
                     val operationArgs=JSONObject(args.toString())
                     if(name=="node_action" && args.has("selector")) {
                         val snapshot=sessions.nodes(owner,token,observation).getOrThrow()
@@ -316,6 +325,7 @@ class McpToolRegistry(private val sessions: VirtualScreenSessionManager,
             "request_control" -> if(action == "request") setOf("approval_id") else emptySet()
             "node_action" -> {
                 require(a.has("node_id") xor a.has("selector")) { "INVALID_NODE_TARGET" }
+                if(a.has("node_id")) require(a.has("observation_id")) { "MISSING_ARGUMENT" }
                 if(action != "set_text") setOf("value") else { require(a.has("value")) { "MISSING_ARGUMENT" }; emptySet() }
             }
             "observe" -> { require(!(a.has("include_nodes") && a.has("mode"))) { "ARGUMENT_NOT_APPLICABLE" }; emptySet() }

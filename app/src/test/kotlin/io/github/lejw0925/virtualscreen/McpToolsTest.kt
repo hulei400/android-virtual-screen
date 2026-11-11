@@ -459,6 +459,22 @@ class McpToolsTest {
         args.remove("mode"); args.put("observation_id",fresh.getString("observation_id")).put("action","click").put("selector",JSONObject().put("text","OK"))
         assertTrue(registry.call("node_action",args,"test").getJSONObject("structuredContent").getBoolean("ok")); assertEquals(1,root.inputs)
     }
+    @Test fun selectorActionWithoutObservationObservesFirstAndNodeIdStillNeedsOne() = runBlocking {
+        val root=FakeBackend(BackendKind.ROOT).apply { testNodes=listOf(NodeInfo("one",text="OK",clickable=true)) }
+        val sessions=VirtualScreenSessionManager(RuntimeEnvironment.getApplication(),root,FakeBackend(BackendKind.SHIZUKU))
+        val registry=McpToolRegistry(sessions)
+        val lease=(sessions.acquireLease("test") as LeaseDecision.Granted).lease
+        sessions.create("test",lease.token)
+        // No observe call first: the selector action observes fresh internally.
+        val args=JSONObject().put("purpose","Tap a known button").put("lease_token",lease.token).put("action","click").put("selector",JSONObject().put("text","OK"))
+        val result=registry.call("node_action",args,"test").getJSONObject("structuredContent")
+        assertTrue(result.getBoolean("ok")); assertEquals(1,root.inputs)
+        assertTrue(result.has("observation_id"))
+        // node_id without an observation is still rejected.
+        val byId=JSONObject().put("purpose","Tap by node id").put("lease_token",lease.token).put("action","click").put("node_id","one")
+        assertEquals("MISSING_ARGUMENT",registry.call("node_action",byId,"test").getJSONObject("structuredContent").getString("code"))
+        assertEquals(1,root.inputs)
+    }
     @Test fun acceptedActionIsNotRepeatedWhenAfterObservationFails() = runBlocking {
         val root=FakeBackend(BackendKind.ROOT)
         val sessions=VirtualScreenSessionManager(RuntimeEnvironment.getApplication(),root,FakeBackend(BackendKind.SHIZUKU))
