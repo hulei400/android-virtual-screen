@@ -159,6 +159,7 @@ class VirtualScreenApplication : Application() {
             override fun onActivityPaused(activity: Activity) {
                 if (resumedActivity === activity) {
                     resumedActivity = null
+                    android.util.Log.d("VS_DIAG", "paused ${activity.javaClass.simpleName} -> schedule reshow in 500ms")
                     // The app just went to the background: Home, or another
                     // app covering the viewer — e.g. the system file picker
                     // launched from the virtual display. Re-show the float
@@ -173,6 +174,7 @@ class VirtualScreenApplication : Application() {
                     showWhenBackgroundedJob = runtimeScope.launch {
                         delay(500)
                         val state = sessions.state.value
+                        android.util.Log.d("VS_DIAG", "reshow check: resumed=${resumedActivity == null} display=${state.displayId} headless=${state.config.headless} overlay=${FloatViewer.canDrawOverlays(this@VirtualScreenApplication)} liveChannel=${sessions.liveChannel != null}")
                         if (resumedActivity == null && state.displayId != null && !state.config.headless
                             && FloatViewer.canDrawOverlays(this@VirtualScreenApplication)) {
                             runCatching { floatViewer.ensureShowing() }

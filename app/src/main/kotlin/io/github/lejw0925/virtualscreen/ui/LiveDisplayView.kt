@@ -72,6 +72,7 @@ internal class LiveDisplayView(context: Context) : FrameLayout(context),SurfaceH
     fun setTarget(id: String?,channel: LiveDisplayChannel?,nextGeometry: LiveGeometry,frame: Bitmap?) {
         bitmap=frame
         if(sessionId != id || target !== channel || geometry != nextGeometry) {
+            android.util.Log.d("VS_DIAG", "setTarget: session=$id channel=${channel != null} geom=${nextGeometry.width}x${nextGeometry.height} frame=${frame != null}")
             cancelGesture(); sessionId=id; target=channel; geometry=nextGeometry; inputReadyAt=Long.MAX_VALUE; attach()
         }
         fallback.invalidate()
@@ -84,7 +85,9 @@ internal class LiveDisplayView(context: Context) : FrameLayout(context),SurfaceH
     override fun onAttachedToWindow() { super.onAttachedToWindow(); if(!disposed) attach() }
     private fun attach() {
         val channel=target; val parentSurface=if(ready) live.surfaceControl else null
-        if(disposed || !resumed || channel == null || parentSurface?.isValid != true || width<=0 || height<=0) { detach(); return }
+        if(disposed || !resumed || channel == null || parentSurface?.isValid != true || width<=0 || height<=0) {
+            if (resumed && !disposed) android.util.Log.d("VS_DIAG", "attach skip: channel=${channel != null} surfaceValid=${parentSurface?.isValid} w=$width h=$height ready=$ready")
+            detach(); return }
         val generation=epoch.incrementAndGet(); val w=width; val h=height
         submit {
             if(epoch.get()!=generation) return@submit
@@ -97,6 +100,7 @@ internal class LiveDisplayView(context: Context) : FrameLayout(context),SurfaceH
                 } }
             } catch(e: Exception) { post {
                 if(epoch.get()==generation && !disposed && resumed && ready && target===channel) {
+                    android.util.Log.d("VS_DIAG", "attach threw ${e.javaClass.simpleName}: ${e.message} attempt=$attachAttempt")
                     setLive(false); onError("DISPLAY_MIRROR_UNAVAILABLE")
                     removeCallbacks(retryAttach)
                     // Keep retrying while the view is resumed: the mirror is
@@ -118,6 +122,7 @@ internal class LiveDisplayView(context: Context) : FrameLayout(context),SurfaceH
     }
     private fun setLive(value: Boolean) {
         if(isLive==value) return
+        android.util.Log.d("VS_DIAG", "setLive $isLive -> $value")
         cancelGesture(); isLive=value; fallback.visibility=if(value) GONE else VISIBLE
         inputReadyAt=if(resumed && (value || bitmap!=null)) SystemClock.uptimeMillis() else Long.MAX_VALUE
         onLiveChanged(value)

@@ -311,25 +311,30 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
      *  no live content. Returns true if the window ends up showing. */
     fun ensureShowing(): Boolean {
         if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { ensureShowing() }; return true }
+        android.util.Log.d("VS_DIAG", "ensureShowing: root=${root != null} live=$live collapsed=$collapsed suppressed=$autoShowSuppressed")
         if (root != null && live && !collapsed) return true
         if (root != null) hide()
         clearAutoShowSuppression()
-        return show()
+        val ok = show()
+        android.util.Log.d("VS_DIAG", "ensureShowing: show()=$ok")
+        return ok
     }
     fun toggle() { if (root != null) hide() else show() }
     fun show(): Boolean {
         if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { show() }; return true }
         if (root != null) return true
-        if (autoShowSuppressed) return false
-        if (!canDrawOverlays(app)) return false
+        if (autoShowSuppressed) { android.util.Log.d("VS_DIAG", "show: blocked suppressed"); return false }
+        if (!canDrawOverlays(app)) { android.util.Log.d("VS_DIAG", "show: blocked no overlay perm"); return false }
         val state = app.sessions.state.value
-        if (state.displayId == null) return false
+        if (state.displayId == null) { android.util.Log.d("VS_DIAG", "show: blocked no display"); return false }
         return try {
             buildViews(state)
             app.registerComponentCallbacks(configCallbacks)
             startLoops()
+            android.util.Log.d("VS_DIAG", "show: ok display=${state.displayId} liveChannel=${app.sessions.liveChannel != null}")
             true
         } catch (e: Exception) {
+            android.util.Log.d("VS_DIAG", "show: buildViews threw ${e.javaClass.simpleName}: ${e.message}")
             app.activityLog.failure("float_viewer", e)
             hide()
             false
