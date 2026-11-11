@@ -132,7 +132,7 @@ internal class VirtualScreenFrameCapture(
             cropped = Bitmap.createBitmap(padded, 0, 0, image.width, image.height)
             upright = VirtualScreenFrameTransform.upright(cropped, latestRotation)
             val encoded = ByteArrayOutputStream()
-            if (!upright.compress(Bitmap.CompressFormat.JPEG, 75, encoded)) return
+            if (!upright.compress(Bitmap.CompressFormat.JPEG, 70, encoded)) return
             val jpeg = encoded.toByteArray()
             if (jpeg.size > 2_000_000) return
             val completed = SystemClock.elapsedRealtime()

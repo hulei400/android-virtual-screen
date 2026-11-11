@@ -195,7 +195,7 @@ class McpToolRegistry(private val sessions: VirtualScreenSessionManager,
             complete(activity,if(result.ok) "completed" else "failed",result.code)
             receipts.record(owner,requestId,mapOf("tool" to name,"phase" to if(result.ok) "completed" else "failed","ok" to result.ok,"code" to result.code,"session_id" to result.sessionId)+
                 result.values.filterKeys { it in setOf("execution_status","effect_status","observation_status","observation_error","observation_id","requires_observation") })
-            encode(result.copy(values=result.values+("request_id" to requestId)),l,purpose,args.optInt("max_image_width",2048))
+            encode(result.copy(values=result.values+("request_id" to requestId)),l,purpose,args.optInt("max_image_width",1080))
         } catch(c: CancellationException) {
             sessions.cancelActive(owner); complete(activity,"cancelled","CANCELLED")
             receipts.record(owner,requestId,mapOf("tool" to name,"phase" to "cancelled","execution_status" to "unknown","requires_observation" to true)); throw c
@@ -345,7 +345,7 @@ class McpToolRegistry(private val sessions: VirtualScreenSessionManager,
         is LeaseDecision.Rejected -> OperationEnvelope.failure(d.code,null,"controller" to d.currentOwner)
     }
     companion object {
-        fun encode(e: OperationEnvelope,l: UiLanguage = UiLanguage.EN,purpose: String = "",maxImageWidth: Int = 2048): JSONObject {
+        fun encode(e: OperationEnvelope,l: UiLanguage = UiLanguage.EN,purpose: String = "",maxImageWidth: Int = 1080): JSONObject {
             val data=JSONObject().put("ok",e.ok).put("code",e.code ?: JSONObject.NULL).put("session_id",e.sessionId ?: JSONObject.NULL).put("language",l.tag).put("purpose",purpose)
             e.values.filterKeys { it != "frame" && it != "message" }.forEach { (k,v) -> data.put(k,JSONObject.wrap(v)) }
             val frame=e.values["frame"] as? Bitmap
@@ -361,7 +361,7 @@ class McpToolRegistry(private val sessions: VirtualScreenSessionManager,
                     .put("recovery_tools",JSONArray(listOf("launch_app","observe")))
             }
             val content=JSONArray().put(JSONObject().put("type","text").put("text",data.toString()))
-            image?.let { bitmap -> val bytes=ByteArrayOutputStream(); bitmap.compress(Bitmap.CompressFormat.JPEG,80,bytes)
+            image?.let { bitmap -> val bytes=ByteArrayOutputStream(); bitmap.compress(Bitmap.CompressFormat.JPEG,70,bytes)
                 content.put(JSONObject().put("type","image").put("mimeType","image/jpeg").put("data",Base64.encodeToString(bytes.toByteArray(),Base64.NO_WRAP)))
                 if(bitmap!==frame) bitmap.recycle() }
             return JSONObject().put("isError",!e.ok).put("structuredContent",data).put("content",content)

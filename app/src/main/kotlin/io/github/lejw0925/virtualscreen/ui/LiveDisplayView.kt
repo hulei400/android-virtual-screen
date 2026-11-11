@@ -99,8 +99,11 @@ internal class LiveDisplayView(context: Context) : FrameLayout(context),SurfaceH
                 if(epoch.get()==generation && !disposed && resumed && ready && target===channel) {
                     setLive(false); onError("DISPLAY_MIRROR_UNAVAILABLE")
                     removeCallbacks(retryAttach)
-                    if(attachAttempt<6) {
-                        val delay=(50L shl attachAttempt.coerceAtMost(4)).coerceAtMost(800L)
+                    // Fullscreen mirror handoff: the float window holds the
+                    // mirror until it hides, so retry on a fixed short beat
+                    // (no exponential backoff) until the mirror frees up.
+                    if(attachAttempt<10) {
+                        val delay=100L
                         attachAttempt++
                         postDelayed(retryAttach,delay)
                     }
