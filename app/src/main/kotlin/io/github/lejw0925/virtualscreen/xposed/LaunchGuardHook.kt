@@ -190,7 +190,24 @@ class LaunchGuardHook : IXposedHookLoadPackage {
                 val dmgClass = Class.forName("android.hardware.display.DisplayManagerGlobal")
                 val dmg = dmgClass.getMethod("getInstance").invoke(null) ?: return true
                 val ids = dmgClass.getMethod("getDisplayIds").invoke(dmg) as? IntArray ?: return true
-                ids.any { it != Display.DEFAULT_DISPLAY }
+                // Only our own virtual display counts. Other apps keep
+                // their own virtual displays alive permanently (verified
+                // 2026-11-12: Muse's headless browser holds displays
+                // 6/7/8, "local-browser-headless"); counting them would
+                // run the expensive task scan on every launcher tap.
+                // Our display is created with the name
+                // "android-virtual-screen".
+                val getDisplayInfo = dmgClass.getMethod(
+                    "getDisplayInfo",
+                    Int::class.javaPrimitiveType,
+                )
+                for (id in ids) {
+                    if (id == Display.DEFAULT_DISPLAY) continue
+                    val info = getDisplayInfo.invoke(dmg, id) ?: continue
+                    val name = info.javaClass.getField("name").get(info) as? String ?: continue
+                    if (name.contains("android-virtual-screen")) return true
+                }
+                false
             } catch (t: Throwable) {
                 XposedBridge.log(t)
                 true
