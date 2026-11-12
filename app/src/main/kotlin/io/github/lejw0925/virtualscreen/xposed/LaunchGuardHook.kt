@@ -168,17 +168,23 @@ class LaunchGuardHook : IXposedHookLoadPackage {
 
         /**
          * True when any display other than the primary (display 0) exists.
-         * Uses DisplayManagerGlobal (a cheap in-process call in
-         * system_server) instead of enumerating tasks. Any failure returns
-         * true (fail open to the full task check, never skip the guard on
-         * a lookup error).
+         * Queries the DisplayManagerService directly (a Binder call to the
+         * authoritative state) instead of DisplayManagerGlobal, whose
+         * in-process cache can still list a virtual display for a moment
+         * after it was destroyed — that stale entry is what made the first
+         * desktop launch after closing the virtual screen still stutter:
+         * the fast path saw a "non-primary display" that was already gone
+         * and fell through to the expensive task enumeration. Any failure
+         * returns true (fail open to the full task check, never skip the
+         * guard on a lookup error).
          */
         private fun hasNonPrimaryDisplay(): Boolean {
             return try {
-                val dmgClass = Class.forName("android.hardware.display.DisplayManagerGlobal")
-                val dmg = dmgClass.getMethod("getInstance").invoke(null) ?: return true
-                val ids = dmgClass.getMethod("getDisplayIds").invoke(dmg) as? IntArray ?: return true
-                ids.any { it != Display.DEFAULT_DISPLAY }
+                val serviceManager = Class.forName("android.os.ServiceManager")
+                val getService = serviceManager.getMethod("getService", String::class.java)
+                val displayService = getService.invoke(null, "display") ?: return true
+                val displayIds = displayService.javaClass.getMethod("getDisplayIds").invoke(displayService) as? IntArray ?: return true
+                displayIds.any { it != Display.DEFAULT_DISPLAY }
             } catch (t: Throwable) {
                 XposedBridge.log(t)
                 true
