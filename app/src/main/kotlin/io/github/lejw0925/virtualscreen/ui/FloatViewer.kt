@@ -532,11 +532,11 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             }
         }
         // #87: keep the fullscreen top bar's step + purpose live. mcp is
-        // created in onCreate, before the viewer can show, but guard anyway
-        // so a late init can never kill the other loops.
+        // created in onCreate, before the viewer can show; runCatching
+        // guards the (unreachable in practice) uninitialized case so it
+        // can never kill the other loops.
         activityJob = scope.launch {
-            if (!app::mcp.isInitialized) return@launch
-            app.mcp.activity.collect { updateTopBar(it) }
+            runCatching { app.mcp.activity.collect { updateTopBar(it) } }
         }
     }
     private fun collapseIfAtEdge(): Boolean {
@@ -671,7 +671,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         fsSavedX = p.x; fsSavedY = p.y; fsSavedW = p.width; fsSavedH = p.height
         expanded = true
         topBar?.visibility = View.VISIBLE
-        if (app::mcp.isInitialized) updateTopBar(app.mcp.activity.value)
+        updateTopBar(runCatching { app.mcp.activity.value }.getOrNull())
         updateTakeoverButton()
         val from = android.graphics.Rect(p.x, p.y, p.x + p.width, p.y + p.height)
         val to = android.graphics.Rect(0, 0, screenW, screenH)
