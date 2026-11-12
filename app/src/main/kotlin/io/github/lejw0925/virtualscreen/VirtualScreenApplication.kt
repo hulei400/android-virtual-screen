@@ -23,6 +23,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 
 class VirtualScreenApplication : Application() {
@@ -161,7 +162,33 @@ class VirtualScreenApplication : Application() {
             var lastDisplayId: Int? = null
             var lastHeadless: Boolean? = null
             var retryJob: Job? = null
-            sessions.state.collect { s ->
+            // Bring the float window up with a few retries. A single
+            // show() can be lost (a racing hide from the viewer
+            // resuming, a main-thread timing slip), so retry for a few
+            // seconds. The retry stops as soon as the window is up, or
+            // as soon as the user deliberately goes fullscreen (that
+            // sets the suppression flag, so the loop never fights the
+            // user's choice).
+            fun showFloatWithRetry() {
+                displayAppearedAt = System.currentTimeMillis()
+                floatViewer.clearAutoShowSuppression()
+                retryJob?.cancel()
+                retryJob = launch {
+                    repeat(6) {
+                        if (floatViewer.isShowing || floatViewer.autoShowSuppressed) {
+                            maybeMoveViewerToBackground()
+                            return@launch
+                        }
+                        if (sessions.state.value.displayId == null) return@launch
+                        if (FloatViewer.canDrawOverlays(this@VirtualScreenApplication)) {
+                            runCatching { floatViewer.show() }
+                        }
+                        delay(700)
+                    }
+                    if (floatViewer.isShowing) maybeMoveViewerToBackground()
+                }
+            }
+            combine(sessions.state, sessions.currentAppFlow) { s, app -> s to app }.collect { (s, currentApp) ->
                 val id = s.displayId
                 val headless = s.config.headless
                 val newDisplay = id != null && id != lastDisplayId
@@ -175,32 +202,26 @@ class VirtualScreenApplication : Application() {
                         // state emission doesn't bring it up.
                         retryJob?.cancel()
                         floatViewer.suppressAutoShow()
-                    } else {
+                    } else if (currentApp != null) {
                         // New display: the float window is the default view.
-                        displayAppearedAt = System.currentTimeMillis()
-                        // A single show() can be lost (a racing hide from the
-                        // viewer resuming, a main-thread timing slip), so retry
-                        // for a few seconds. The retry stops as soon as the
-                        // window is up, or as soon as the user deliberately goes
-                        // fullscreen (that sets the suppression flag, so the loop
-                        // never fights the user's choice).
-                        floatViewer.clearAutoShowSuppression()
-                        retryJob?.cancel()
-                        retryJob = launch {
-                            repeat(6) {
-                                if (floatViewer.isShowing || floatViewer.autoShowSuppressed) {
-                                    maybeMoveViewerToBackground()
-                                    return@launch
-                                }
-                                if (sessions.state.value.displayId == null) return@launch
-                                if (FloatViewer.canDrawOverlays(this@VirtualScreenApplication)) {
-                                    runCatching { floatViewer.show() }
-                                }
-                                delay(700)
-                            }
-                            if (floatViewer.isShowing) maybeMoveViewerToBackground()
-                        }
+                        showFloatWithRetry()
                     }
+                }
+                // No app on the display any more (closed, or switched away
+                // with nothing on top): hide the float window. Before #85
+                // it stayed up once an app had ever been opened, because
+                // headless never flips back to true — so a session that
+                // went back to pure shell commands kept covering the
+                // user's screen with a window showing nothing to watch.
+                if (id != null && !headless && currentApp == null && floatViewer.isShowing) {
+                    retryJob?.cancel()
+                    floatViewer.hide()
+                    floatViewer.suppressAutoShow()
+                }
+                // An app is on top again: clear the suppression so the
+                // float window can come back.
+                if (id != null && !headless && currentApp != null && floatViewer.autoShowSuppressed && !floatViewer.isShowing) {
+                    showFloatWithRetry()
                 }
                 lastDisplayId = id
                 lastHeadless = headless
