@@ -88,6 +88,39 @@ class VirtualScreenSessionManager(
     private val _currentApp = MutableStateFlow<CurrentApp?>(null)
     val currentAppFlow: StateFlow<CurrentApp?> = _currentApp.asStateFlow()
     private var lastTopPackage: String? = null
+
+    /**
+     * Marker the LaunchGuard LSPosed hook reads to know a virtual
+     * display is up (#86). Written when a display is created,
+     * removed in closeInternal (the single choke point for display
+     * teardown). Lives in the app's external files dir so
+     * system_server can read it with no permission. A stale file
+     * (app killed before teardown) only makes the hook fall back to
+     * its display check; a missing file makes it skip the check
+     * entirely. All I/O is best-effort and never fails a create or
+     * a close.
+     */
+    private val activeMarker: java.io.File?
+        get() = context.getExternalFilesDir(null)?.let { java.io.File(it, "vs_active") }
+
+    private fun markActive() {
+        try {
+            val marker = activeMarker ?: return
+            marker.parentFile?.mkdirs()
+            marker.createNewFile()
+        } catch (t: Throwable) {
+            log.failure("vs_active_marker", t)
+        }
+    }
+
+    private fun clearActiveMarker() {
+        try {
+            activeMarker?.delete()
+        } catch (t: Throwable) {
+            log.failure("vs_active_marker", t)
+        }
+    }
+
     private fun update(block: (SessionState) -> SessionState) = synchronized(stateLock) {
         val before = mutableState.value
         val after = block(before)
@@ -302,6 +335,7 @@ class VirtualScreenSessionManager(
                 imePolicy = created.imePolicy,
                 capabilities = it.capabilities.copy(displayCreation = CapabilityStatus.AVAILABLE, frameCapture = CapabilityStatus.UNKNOWN, inputInjection = CapabilityStatus.UNKNOWN,
                     screenOff = if (config.allowScreenOff) CapabilityStatus.UNKNOWN else CapabilityStatus.UNAVAILABLE)) }
+            markActive()
             OperationEnvelope(true, sessionId = sid, values = mapOf("display_id" to created.displayId, "generation" to epoch.get()))
         } catch (failure: CancellationException) {
             withContext(NonCancellable) { closeInternal() }; throw failure
@@ -330,6 +364,7 @@ class VirtualScreenSessionManager(
         finally {
             handle = null; synchronized(stateLock) { latest = null; latestNodes = null }; epoch.incrementAndGet()
             restartApprovals.cancelAll()
+            clearActiveMarker()
             update { it.copy(status = SessionStatus.STOPPED, sessionId = null, displayId = null, observationId = null, frame = null, observationGeneration = epoch.get(),previewStatus=PreviewStatus.HIDDEN, errorCode = null, imePolicy = false) }
         }
     }

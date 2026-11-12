@@ -92,6 +92,12 @@ class LaunchGuardHook : IXposedHookLoadPackage {
     private class LaunchGuardCallback(private val intentIndex: Int) : XC_MethodHook() {
         override fun beforeHookedMethod(param: MethodHookParam) {
             try {
+                // #86: when no virtual display is up, do not intercept at
+                // all. The app maintains a marker file (written on display
+                // create, removed on teardown) that this hook reads with a
+                // single stat(). Without it, every launcher tap pays for a
+                // display enumeration even when the virtual screen is off.
+                if (!isVirtualScreenActive()) return
                 val intent = param.args[intentIndex] as? Intent ?: return
                 // Only guard launcher taps. The agent's own launches use
                 // `am start --display <virtualId> -n <component>` with no
@@ -115,6 +121,28 @@ class LaunchGuardHook : IXposedHookLoadPackage {
     }
 
     companion object {
+        /**
+         * True when the virtual screen has a display up, read from the
+         * marker file the app maintains in its external files dir
+         * (system_server can read it with no permission). A single
+         * File.exists() — no Binder, no reflection — so a launcher tap
+         * when the virtual screen is off costs ~nothing. Any read
+         * failure fails open (true) so the guard keeps working, and a
+         * stale file (app killed before teardown) only falls back to
+         * the display check below, never to a wrong redirect.
+         */
+        private fun isVirtualScreenActive(): Boolean {
+            return try {
+                java.io.File(
+                    "/storage/emulated/0/Android/data/" +
+                        "io.github.lejw0925.virtualscreen/files/vs_active",
+                ).exists()
+            } catch (t: Throwable) {
+                XposedBridge.log(t)
+                true
+            }
+        }
+
         /**
          * True when [targetPackage] has a task on any display other than the
          * primary display (display 0). Called from the ATMS.startActivity
