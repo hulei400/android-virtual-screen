@@ -88,6 +88,8 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
         private const val SIDE_LEFT = 0
         private const val SIDE_RIGHT = 1
+        /** #88: collapse to the top edge (upward drag 收起). */
+        private const val SIDE_TOP = 2
         /** #88: compact-menu item ids (long-press 收起). */
         private const val MENU_APPS = 1
         private const val MENU_PIP = 2
@@ -173,6 +175,8 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private var downWinH = 0
     private var moved = false; private var resizing = false
     private var triggerDownX = 0f; private var triggerDownY = 0f; private var triggerDownWinY = 0
+    /** #88: x of the collapsed bar when a top-bar drag starts (for sliding it along the top). */
+    private var triggerDownWinX = 0
     private var triggerMoved = false; private var triggerDragging = false
     private val configCallbacks = object : ComponentCallbacks {
         override fun onConfigurationChanged(newConfig: Configuration) {
@@ -186,10 +190,18 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private val sinkRunnable = Runnable {
         if (!collapsed) return@Runnable
         val p = params ?: return@Runnable
-        val thin = (12f * density).roundToInt(); val tall = (72f * density).roundToInt()
-        p.width = thin; p.height = tall
-        p.x = if (collapsedSide == SIDE_LEFT) 0 else screenW - thin
-        p.y = p.y.coerceIn(0, (screenH - tall).coerceAtLeast(0))
+        if (collapsedSide == SIDE_TOP) {
+            // #88: top bar sinks to a thin horizontal sliver at the top.
+            val thin = (12f * density).roundToInt(); val wide = (72f * density).roundToInt()
+            p.width = wide; p.height = thin
+            p.y = 0
+            p.x = p.x.coerceIn(0, (screenW - wide).coerceAtLeast(0))
+        } else {
+            val thin = (12f * density).roundToInt(); val tall = (72f * density).roundToInt()
+            p.width = thin; p.height = tall
+            p.x = if (collapsedSide == SIDE_LEFT) 0 else screenW - thin
+            p.y = p.y.coerceIn(0, (screenH - tall).coerceAtLeast(0))
+        }
         updateLayout()
     }
     // The root intercepts every touch except ones starting on the trigger
@@ -255,6 +267,13 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                         // user was only moving it up/down.
                         if (abs(dx) > abs(dy)) {
                             if (collapseIfAtEdge()) collapsedDuringDrag = true
+                        } else if (abs(dy) > abs(dx) && dy < 0) {
+                            // #88: an upward drag to the top edge collapses
+                            // the window too (收起). Same guard as above:
+                            // only when the drag is really pushing up, so a
+                            // window already sitting at the top does not
+                            // collapse on a sideways nudge.
+                            if (collapseIfAtEdge(upward = true)) collapsedDuringDrag = true
                         }
                     }
                 }
@@ -290,8 +309,10 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                     // release within 8dp — including a vertical drag along
                     // the edge, or a slight nudge inward.
                     val dx = (event.rawX - downRawX).roundToInt()
+                    val dy = (event.rawY - downRawY).roundToInt()
                     if (p.x <= edgePx && dx < -touchSlopPx) collapse(SIDE_LEFT)
                     else if (p.x + p.width >= screenW - edgePx && dx > touchSlopPx) collapse(SIDE_RIGHT)
+                    else if (p.y <= edgePx && dy < -touchSlopPx) collapse(SIDE_TOP)
                     else saveSize()
                 }
             }
@@ -312,22 +333,37 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             MotionEvent.ACTION_DOWN -> {
                 triggerDownX = event.rawX; triggerDownY = event.rawY
                 triggerDownWinY = params?.y ?: 0
+                triggerDownWinX = params?.x ?: 0
                 triggerMoved = false; triggerDragging = false
             }
             MotionEvent.ACTION_MOVE -> {
                 val dx = event.rawX - triggerDownX
                 val dy = event.rawY - triggerDownY
-                val outward = if (collapsedSide == SIDE_LEFT) dx else -dx
-                if (triggerDragging) {
-                    // Already in vertical-drag mode: keep following the finger.
-                    moveBarTo(triggerDownWinY + dy.roundToInt())
-                } else if (!triggerMoved) {
-                    if (outward > 24f * density) { expand(); triggerMoved = true }
-                    else if (abs(dy) > touchSlopPx && abs(dy) > abs(dx)) {
-                        // Vertical drag dominates: reposition the bar along
-                        // the edge instead of expanding.
-                        triggerDragging = true; triggerMoved = true
+                if (collapsedSide == SIDE_TOP) {
+                    // #88: top bar — drag down to expand, drag sideways to
+                    // slide it along the top edge.
+                    if (triggerDragging) {
+                        moveBarToX(triggerDownWinX + dx.roundToInt())
+                    } else if (!triggerMoved) {
+                        if (dy > 24f * density) { expand(); triggerMoved = true }
+                        else if (abs(dx) > touchSlopPx && abs(dx) > abs(dy)) {
+                            triggerDragging = true; triggerMoved = true
+                            moveBarToX(triggerDownWinX + dx.roundToInt())
+                        }
+                    }
+                } else {
+                    val outward = if (collapsedSide == SIDE_LEFT) dx else -dx
+                    if (triggerDragging) {
+                        // Already in vertical-drag mode: keep following the finger.
                         moveBarTo(triggerDownWinY + dy.roundToInt())
+                    } else if (!triggerMoved) {
+                        if (outward > 24f * density) { expand(); triggerMoved = true }
+                        else if (abs(dy) > touchSlopPx && abs(dy) > abs(dx)) {
+                            // Vertical drag dominates: reposition the bar along
+                            // the edge instead of expanding.
+                            triggerDragging = true; triggerMoved = true
+                            moveBarTo(triggerDownWinY + dy.roundToInt())
+                        }
                     }
                 }
             }
@@ -346,6 +382,17 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         if (!collapsed) return
         p.y = y.coerceIn(0, (screenH - p.height).coerceAtLeast(0))
         savedY = (p.y + p.height / 2 - savedH / 2).coerceIn(0, (screenH - savedH).coerceAtLeast(0))
+        updateLayout()
+    }
+    /** #88: move the collapsed top bar horizontally along the top edge.
+     *  (Companion to moveBarTo for the side bars.) Keeps savedX centred
+     *  on the bar, so expanding restores the window at the bar's current
+     *  horizontal position. */
+    private fun moveBarToX(x: Int) {
+        val p = params ?: return
+        if (!collapsed) return
+        p.x = x.coerceIn(0, (screenW - p.width).coerceAtLeast(0))
+        savedX = (p.x + p.width / 2 - savedW / 2).coerceIn(0, (screenW - savedW).coerceAtLeast(0))
         updateLayout()
     }
     /** Set when the user deliberately closed the float window or went
@@ -561,8 +608,13 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             runCatching { app.mcp.activity.collect { updateTopBar(it) } }
         }
     }
-    private fun collapseIfAtEdge(): Boolean {
+    private fun collapseIfAtEdge(upward: Boolean = false): Boolean {
         val p = params ?: return false
+        if (upward) {
+            // #88: upward drag to the top edge collapses (收起).
+            if (p.y <= 0) { collapse(SIDE_TOP); return true }
+            return false
+        }
         if (p.x <= 0) { collapse(SIDE_LEFT); return true }
         if (p.x + p.width >= screenW) { collapse(SIDE_RIGHT); return true }
         return false
@@ -573,8 +625,14 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private fun snapToEdge() {
         val p = params ?: return
         if (!collapsed) return
-        p.x = if (collapsedSide == SIDE_LEFT) 0 else screenW - p.width
-        p.y = p.y.coerceIn(0, (screenH - p.height).coerceAtLeast(0))
+        if (collapsedSide == SIDE_TOP) {
+            // #88: top bar pins to y=0, x stays where the finger left it.
+            p.y = 0
+            p.x = p.x.coerceIn(0, (screenW - p.width).coerceAtLeast(0))
+        } else {
+            p.x = if (collapsedSide == SIDE_LEFT) 0 else screenW - p.width
+            p.y = p.y.coerceIn(0, (screenH - p.height).coerceAtLeast(0))
+        }
         updateLayout()
     }
     private fun collapse(side: Int) {
@@ -583,12 +641,22 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         setControlMode(false)
         savedX = p.x; savedY = p.y; savedW = p.width; savedH = p.height
         content?.visibility = View.GONE
-        triggerBar?.text = if (side == SIDE_LEFT) "›" else "‹"
-        triggerBar?.visibility = View.VISIBLE
-        val barW = (28f * density).roundToInt(); val barH = (112f * density).roundToInt()
-        p.y = (p.y + (p.height - barH) / 2).coerceIn(0, (screenH - barH).coerceAtLeast(0))
-        p.width = barW; p.height = barH
-        p.x = if (side == SIDE_LEFT) 0 else screenW - barW
+        if (side == SIDE_TOP) {
+            // #88: upward drag collapses to a horizontal bar at the top.
+            triggerBar?.text = "⌄"
+            triggerBar?.visibility = View.VISIBLE
+            val barW = (112f * density).roundToInt(); val barH = (28f * density).roundToInt()
+            p.x = (p.x + (p.width - barW) / 2).coerceIn(0, (screenW - barW).coerceAtLeast(0))
+            p.y = 0
+            p.width = barW; p.height = barH
+        } else {
+            triggerBar?.text = if (side == SIDE_LEFT) "›" else "‹"
+            triggerBar?.visibility = View.VISIBLE
+            val barW = (28f * density).roundToInt(); val barH = (112f * density).roundToInt()
+            p.y = (p.y + (p.height - barH) / 2).coerceIn(0, (screenH - barH).coerceAtLeast(0))
+            p.width = barW; p.height = barH
+            p.x = if (side == SIDE_LEFT) 0 else screenW - barW
+        }
         updateLayout()
         root?.removeCallbacks(sinkRunnable)
         root?.postDelayed(sinkRunnable, 2000)
