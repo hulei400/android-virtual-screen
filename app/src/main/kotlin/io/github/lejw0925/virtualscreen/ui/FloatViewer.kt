@@ -1,5 +1,8 @@
 package io.github.lejw0925.virtualscreen.ui
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.content.ComponentCallbacks
 import android.content.Context
 import android.content.Intent
@@ -22,10 +25,13 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewOutlineProvider
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import io.github.lejw0925.virtualscreen.VirtualScreenApplication
 import io.github.lejw0925.virtualscreen.backend.BackendOperation
@@ -34,6 +40,7 @@ import io.github.lejw0925.virtualscreen.core.ScreenAccessibilityService
 import io.github.lejw0925.virtualscreen.core.SessionState
 import io.github.lejw0925.virtualscreen.core.failure
 import io.github.lejw0925.virtualscreen.core.runtime
+import io.github.lejw0925.virtualscreen.mcp.ToolActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -124,8 +131,26 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private var chromeTouch = false
     private var stateJob: Job? = null
     private var previewJob: Job? = null
+    private var activityJob: Job? = null
     private var live = false
     private var collapsed = false
+    /** #87: fullscreen (expanded) state. The float window morphs into a
+     *  fullscreen viewer with a top bar (step + purpose + takeover +
+     *  shrink), like the reference video: tap the small window to expand,
+     *  tap 收起 to shrink back. While expanded, drag/resize/collapse are
+     *  off; the top bar's buttons are the only chrome. */
+    private var expanded = false
+    private var fsSavedX = 0; private var fsSavedY = 0; private var fsSavedW = 0; private var fsSavedH = 0
+    private var topBar: LinearLayout? = null
+    private var stepText: TextView? = null
+    private var purposeText: TextView? = null
+    private var takeoverBtn: Button? = null
+    private var expandAnimator: ValueAnimator? = null
+    /** Current corner radius, animated 16dp -> 0 on expand and back on
+     *  shrink. The root background drawable and the outline both read it.
+     *  Set to cornerPx in buildViews. */
+    private var cornerRadiusPx = 0f
+    private var rootBackground: GradientDrawable? = null
     private var collapsedSide = SIDE_LEFT
     private var collapsedDuringDrag = false
     private var savedX = 0; private var savedY = 0; private var savedW = 0; private var savedH = 0
@@ -158,7 +183,10 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     // and only chrome touches and bottom-edge resize drags still reach the
     // window.
     private fun isOnChrome(event: MotionEvent): Boolean {
-        val targets = if (collapsed) listOfNotNull(triggerBar) else emptyList<TextView>()
+        // #87: when expanded, the fullscreen top bar is chrome too — its
+        // buttons (takeover / shrink) must receive touches, not the window
+        // drag or the content.
+        val targets = if (collapsed) listOfNotNull(triggerBar) else if (expanded) listOfNotNull(topBar) else emptyList<View>()
         return targets.any { view ->
             if (view.visibility != View.VISIBLE) return@any false
             val loc = IntArray(2); view.getLocationOnScreen(loc)
@@ -167,6 +195,9 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         }
     }
     private fun onWindowTouch(event: MotionEvent): Boolean {
+        // #87: while expanded (fullscreen) the window does not move, resize
+        // or collapse — the top bar's buttons are the only controls.
+        if (expanded) return true
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downRawX = event.rawX; downRawY = event.rawY
@@ -219,10 +250,11 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                     resizing = false
                     saveSize()
                 } else if (!moved) {
-                    // No-op: taps on the window do nothing. The control-mode
-                    // toggle moved to the Fluid Cloud card
-                    // (setControlModeExternal); there is no tap gesture left
-                    // on the window itself.
+                    // #87: a tap on the small window expands it to
+                    // fullscreen (with the step bar), like the reference
+                    // video. In control mode taps go to the content instead
+                    // and never reach here, so this only fires view-only.
+                    expandToFullscreen()
                 } else if (snapped) {
                     // Collapsed mid-drag: glue the bar to the edge at once. It
                     // used to keep following the finger after collapsing, so it
@@ -325,8 +357,11 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         if (Looper.myLooper() != Looper.getMainLooper()) { mainHandler.post { hide() }; return }
         closeImeBridge()
         setControlMode(false)
+        expandAnimator?.cancel(); expandAnimator = null
+        expanded = false
         stateJob?.cancel(); stateJob = null
         previewJob?.cancel(); previewJob = null
+        activityJob?.cancel(); activityJob = null
         imeCheckJob?.cancel(); imeCheckJob = null
         root?.removeCallbacks(sinkRunnable)
         runCatching { app.unregisterComponentCallbacks(configCallbacks) }
@@ -334,7 +369,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         liveView?.dispose()
         liveView = null; imeSink = null
         root?.let { runCatching { windowManager.removeView(it) } }
-        root = null; content = null; triggerBar = null; params = null
+        root = null; content = null; triggerBar = null; topBar = null; stepText = null; purposeText = null; takeoverBtn = null; rootBackground = null; params = null
         collapsed = false; collapsedDuringDrag = false
     }
 
@@ -348,6 +383,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         controlMode = on
         _controlModeFlow.value = on
         if (!on) { liveView?.cancelGesture(); closeImeBridge() }
+        updateTakeoverButton()
         app.activityLog.runtime("float_viewer", "control_mode", if (on) "on" else "off")
     }
     /** Set control mode from outside the window (Fluid Cloud notification
@@ -371,6 +407,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     }
     private fun buildViews(state: SessionState) {
         val d = density
+        cornerRadiusPx = cornerPx
         val (initW, initH) = restoredSize(state)
         val (initX, initY) = restoredPosition(initW, initH)
         val p = WindowManager.LayoutParams(initW, initH,
@@ -391,9 +428,12 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             }
             override fun onTouchEvent(event: MotionEvent): Boolean = onWindowTouch(event)
         }.apply {
-            background = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; setColor(0xFF000000.toInt()); cornerRadius = cornerPx }
+            // #87: keep the drawable so the expand/shrink animation can
+            // drive the corner radius (16dp -> 0 fullscreen and back).
+            rootBackground = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; setColor(0xFF000000.toInt()); cornerRadius = cornerRadiusPx }
+            background = rootBackground
             outlineProvider = object : ViewOutlineProvider() {
-                override fun getOutline(view: View, outline: Outline) { outline.setRoundRect(0, 0, view.width, view.height, cornerPx) }
+                override fun getOutline(view: View, outline: Outline) { outline.setRoundRect(0, 0, view.width, view.height, cornerRadiusPx) }
             }
             clipToOutline = true
         }
@@ -465,6 +505,12 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         }
         rootView.addView(contentView)
         rootView.addView(trigger)
+        // #87: fullscreen top bar (step + purpose + takeover + shrink),
+        // hidden until the window expands. Added last so it sits above the
+        // live content.
+        val bar = buildTopBar()
+        rootView.addView(bar)
+        topBar = bar
         windowManager.addView(rootView, p)
         root = rootView; content = contentView; liveView = viewer; triggerBar = trigger; params = p
         viewer.setResumed(true)
@@ -484,6 +530,13 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                 withContext(Dispatchers.IO) { runCatching { if (app.sessions.state.value.displayId != null) app.sessions.preview() } }
                 delay(if (collapsed) 2000 else if (live) 1000 else 350)
             }
+        }
+        // #87: keep the fullscreen top bar's step + purpose live. mcp is
+        // created in onCreate, before the viewer can show, but guard anyway
+        // so a late init can never kill the other loops.
+        activityJob = scope.launch {
+            if (!app::mcp.isInitialized) return@launch
+            app.mcp.activity.collect { updateTopBar(it) }
         }
     }
     private fun collapseIfAtEdge(): Boolean {
@@ -528,6 +581,141 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         p.x = savedX.coerceIn(0, (screenW - p.width).coerceAtLeast(0))
         p.y = savedY.coerceIn(0, (screenH - p.height).coerceAtLeast(0))
         updateLayout()
+    }
+    // #87: fullscreen top bar + smooth expand/shrink, mirroring the
+    // reference video: the small window morphs into a fullscreen viewer
+    // with a step bar (第 N 步 + current purpose), a takeover toggle and
+    // a shrink button. The bar is chrome (see isOnChrome), so its buttons
+    // work even in control mode.
+    private fun buildTopBar(): LinearLayout {
+        val d = density
+        val l = systemLanguage(app)
+        val bar = LinearLayout(app).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(0xCC1F1F1F.toInt())
+            setPadding((12f * d).roundToInt(), (8f * d).roundToInt(), (12f * d).roundToInt(), (8f * d).roundToInt())
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.TOP }
+            visibility = View.GONE
+        }
+        val step = TextView(app).apply {
+            textSize = 15f
+            setTextColor(0xFFFFFFFF.toInt())
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+        val purpose = TextView(app).apply {
+            textSize = 14f
+            setTextColor(0xFFE0E0E0.toInt())
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                setMargins((10f * d).roundToInt(), 0, (10f * d).roundToInt(), 0)
+            }
+        }
+        val takeover = barButton(l.text("接管", "Take over", "接管")) { setControlModeExternal(!controlMode) }
+        val shrink = barButton(l.text("收起", "Shrink", "收起")) { shrinkToFloat() }
+        bar.addView(step)
+        bar.addView(purpose)
+        bar.addView(takeover)
+        bar.addView(shrink)
+        stepText = step; purposeText = purpose; takeoverBtn = takeover
+        return bar
+    }
+    private fun barButton(text: String, onClick: () -> Unit): Button {
+        val d = density
+        return Button(app).apply {
+            this.text = text
+            textSize = 14f
+            setTextColor(0xFFFFFFFF.toInt())
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(0xFF3C4043.toInt())
+                cornerRadius = 18f * d
+            }
+            setPadding((14f * d).roundToInt(), (6f * d).roundToInt(), (14f * d).roundToInt(), (6f * d).roundToInt())
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                setMargins((4f * d).roundToInt(), 0, 0, 0)
+            }
+            setOnClickListener { onClick() }
+        }
+    }
+    /** Refresh the top bar from the latest MCP activity. No-op while the
+     *  window is small — the bar is hidden there. */
+    private fun updateTopBar(activity: ToolActivity?) {
+        if (!expanded) return
+        val l = systemLanguage(app)
+        val step = activity?.step ?: 0
+        stepText?.text = if (step > 0) l.text("第 $step 步", "Step $step", "第 $step 步") else l.text("待命", "Idle", "待命")
+        val purpose = activity?.purpose?.takeIf { it.isNotBlank() }
+        purposeText?.text = purpose ?: l.text("MCP 已就绪", "MCP ready", "MCP 已就緒")
+    }
+    /** Takeover button label + colour follow control mode: 接管 (accent)
+     *  while view-only, 只看 (neutral) while the user is operating. */
+    private fun updateTakeoverButton() {
+        val btn = takeoverBtn ?: return
+        val d = density
+        val l = systemLanguage(app)
+        if (controlMode) {
+            btn.text = l.text("只看", "View only", "僅觀看")
+            btn.background = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; setColor(0xFF3C4043.toInt()); cornerRadius = 18f * d }
+        } else {
+            btn.text = l.text("接管", "Take over", "接管")
+            btn.background = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; setColor(0xFF1A73E8.toInt()); cornerRadius = 18f * d }
+        }
+    }
+    /** Tap the small window: morph it into the fullscreen viewer. */
+    private fun expandToFullscreen() {
+        val p = params ?: return
+        if (expanded || collapsed) return
+        fsSavedX = p.x; fsSavedY = p.y; fsSavedW = p.width; fsSavedH = p.height
+        expanded = true
+        topBar?.visibility = View.VISIBLE
+        if (app::mcp.isInitialized) updateTopBar(app.mcp.activity.value)
+        updateTakeoverButton()
+        val from = android.graphics.Rect(p.x, p.y, p.x + p.width, p.y + p.height)
+        val to = android.graphics.Rect(0, 0, screenW, screenH)
+        animateWindowRect(from, to, cornerPx, 0f)
+        app.activityLog.runtime("float_viewer", "fullscreen", "expanded")
+    }
+    /** 收起: morph the fullscreen viewer back to the small window. */
+    private fun shrinkToFloat() {
+        val p = params ?: return
+        if (!expanded) return
+        setControlMode(false)
+        val from = android.graphics.Rect(p.x, p.y, p.x + p.width, p.y + p.height)
+        val to = android.graphics.Rect(fsSavedX, fsSavedY, fsSavedX + fsSavedW, fsSavedY + fsSavedH)
+        animateWindowRect(from, to, 0f, cornerPx) {
+            expanded = false
+            topBar?.visibility = View.GONE
+        }
+        app.activityLog.runtime("float_viewer", "fullscreen", "shrunk")
+    }
+    /** Animate the window rect and corner radius together (~300ms,
+     *  decelerating). Cancels any in-flight expand/shrink first. */
+    private fun animateWindowRect(from: android.graphics.Rect, to: android.graphics.Rect, fromRadius: Float, toRadius: Float, onEnd: (() -> Unit)? = null) {
+        val p = params ?: return
+        expandAnimator?.cancel()
+        val anim = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 300
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { v ->
+                val f = v.animatedValue as Float
+                p.x = (from.left + (to.left - from.left) * f).roundToInt()
+                p.y = (from.top + (to.top - from.top) * f).roundToInt()
+                p.width = (from.width() + (to.width() - from.width()) * f).roundToInt()
+                p.height = (from.height() + (to.height() - from.height()) * f).roundToInt()
+                cornerRadiusPx = fromRadius + (toRadius - fromRadius) * f
+                rootBackground?.cornerRadius = cornerRadiusPx
+                root?.invalidateOutline()
+                updateLayout()
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) { onEnd?.invoke() }
+            })
+        }
+        expandAnimator = anim
+        anim.start()
     }
     // Keyboard bridge (idea borrowed from Eta 3.4.0-beta.30, re-implemented
     // from the observed behaviour, no Eta code copied). The system keyboard
@@ -635,6 +823,9 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
      *  frame but is a no-op once the aspect matches (2% deadband). */
     private fun fitToFrameAspect() {
         if (collapsed) return
+        // #87: while expanded the window is fullscreen by design — the
+        // aspect fit must not shrink it back mid-animation or after.
+        if (expanded) return
         val p = params ?: return
         if (p.width <= 0 || p.height <= 0) return
         // Keep the whole window on-screen first: a window resized past the

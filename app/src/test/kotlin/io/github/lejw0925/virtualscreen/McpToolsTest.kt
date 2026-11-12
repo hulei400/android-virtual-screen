@@ -261,6 +261,33 @@ class McpToolsTest {
         sessions.shutdown()
     }
 
+    @Test fun stepCounterCountsOperationsAndResetsOnCreateScreen() = runBlocking {
+        val backend = object : VirtualScreenBackend by FakeBackend(BackendKind.ROOT) {
+            override suspend fun runShell(handle: VirtualScreenHandle, command: String, timeoutMs: Int) =
+                BackendResult.success("exit_code" to 0, "stdout" to "hello\n", "stderr" to "", "timed_out" to false, "truncated" to false)
+        }
+        val sessions = VirtualScreenSessionManager(RuntimeEnvironment.getApplication(), backend, FakeBackend(BackendKind.SHIZUKU))
+        val registry = McpToolRegistry(sessions)
+        val lease = (sessions.acquireLease("test") as LeaseDecision.Granted).lease
+        fun args(purpose: String) = JSONObject().put("purpose", purpose).put("lease_token", lease.token)
+        // create_screen starts a fresh task at step 1.
+        assertTrue(registry.call("create_screen", args("Create the display"), "test").getJSONObject("structuredContent").getBoolean("ok"))
+        assertEquals(1, registry.activity.value?.step)
+        // An operation advances the step.
+        registry.call("run_shell", args("Run a command").put("command", "echo hello"), "test")
+        assertEquals(2, registry.activity.value?.step)
+        // A read-only status query keeps the current step.
+        registry.call("get_status", args("Check status"), "test")
+        assertEquals(2, registry.activity.value?.step)
+        registry.call("run_shell", args("Run another command").put("command", "echo hi"), "test")
+        assertEquals(3, registry.activity.value?.step)
+        // A new display restarts the task at step 1.
+        registry.call("close_screen", args("Close the display"), "test")
+        assertTrue(registry.call("create_screen", args("Create again"), "test").getJSONObject("structuredContent").getBoolean("ok"))
+        assertEquals(1, registry.activity.value?.step)
+        sessions.shutdown()
+    }
+
     @Test fun observeDefaultsToCompactTreeAndPreservesLegacyImageModes() = runBlocking {
         val root=FakeBackend(BackendKind.ROOT).apply {
             testNodes=listOf(NodeInfo("button",text="Open",clickable=true,windowId=7,packageName="fixture"))
