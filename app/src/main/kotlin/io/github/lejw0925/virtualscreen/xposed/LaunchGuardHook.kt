@@ -168,35 +168,29 @@ class LaunchGuardHook : IXposedHookLoadPackage {
 
         /**
          * True when any display other than the primary (display 0) exists.
-         * Queries the DisplayManagerService directly (a Binder call to the
-         * authoritative state) instead of DisplayManagerGlobal, whose
-         * in-process cache can still list a virtual display for a moment
-         * after it was destroyed — that stale entry is what made the first
-         * desktop launch after closing the virtual screen still stutter:
-         * the fast path saw a "non-primary display" that was already gone
-         * and fell through to the expensive task enumeration. Any failure
-         * returns true (fail open to the full task check, never skip the
-         * guard on a lookup error).
+         * Uses DisplayManagerGlobal (a cheap in-process call in
+         * system_server) instead of enumerating tasks. Any failure returns
+         * true (fail open to the full task check, never skip the guard on
+         * a lookup error).
          *
-         * Note: ServiceManager.getService("display") returns an IBinder
-         * whose runtime class is DisplayManagerService$BinderService, and
-         * getDisplayIds is NOT a public method on that class (that was
-         * the #80 live failure: NoSuchMethodException on every launcher
-         * tap, so the fast path never ran). Go through
-         * IDisplayManager.Stub.asInterface(binder) to get a proper
-         * IDisplayManager proxy, then call getDisplayIds on it.
+         * Note: #80 tried ServiceManager.getService("display") +
+         * BinderService.getDisplayIds, and #81 tried
+         * IDisplayManager.Stub.asInterface + IDisplayManager.getDisplayIds
+         * — both throw NoSuchMethodException on ColorOS 16 (the methods
+         * simply do not exist there), so the fast path never ran and every
+         * launcher tap fell back to the expensive task enumeration.
+         * DisplayManagerGlobal.getDisplayIds is the only one of the three
+         * that exists on this system. Its cache can briefly list a
+         * just-destroyed virtual display (the first launch after closing
+         * the screen may still stutter once), which is far better than
+         * stuttering on every launch.
          */
         private fun hasNonPrimaryDisplay(): Boolean {
             return try {
-                val serviceManager = Class.forName("android.os.ServiceManager")
-                val getService = serviceManager.getMethod("getService", String::class.java)
-                val binder = getService.invoke(null, "display") as? android.os.IBinder ?: return true
-                val stubClass = Class.forName("android.hardware.display.IDisplayManager\$Stub")
-                val asInterface = stubClass.getMethod("asInterface", android.os.IBinder::class.java)
-                val idm = asInterface.invoke(null, binder) ?: return true
-                val idmClass = Class.forName("android.hardware.display.IDisplayManager")
-                val displayIds = idmClass.getMethod("getDisplayIds").invoke(idm) as? IntArray ?: return true
-                displayIds.any { it != Display.DEFAULT_DISPLAY }
+                val dmgClass = Class.forName("android.hardware.display.DisplayManagerGlobal")
+                val dmg = dmgClass.getMethod("getInstance").invoke(null) ?: return true
+                val ids = dmgClass.getMethod("getDisplayIds").invoke(dmg) as? IntArray ?: return true
+                ids.any { it != Display.DEFAULT_DISPLAY }
             } catch (t: Throwable) {
                 XposedBridge.log(t)
                 true

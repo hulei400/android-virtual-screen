@@ -17,14 +17,30 @@ import android.content.Intent
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
+        val action = intent?.action
+        android.util.Log.i(
+            "VirtualScreenBoot",
+            "BootReceiver onReceive action=$action",
+        )
+        if (action != Intent.ACTION_BOOT_COMPLETED &&
+            action != "android.intent.action.QUICKBOOT_POWERON"
+        ) return
         try {
             context.startForegroundService(
                 Intent(context, VirtualScreenForegroundService::class.java),
             )
+            android.util.Log.i(
+                "VirtualScreenBoot",
+                "BootReceiver started foreground service",
+            )
         } catch (t: Throwable) {
             // A missed boot start just means the user opens the app once,
             // the same as before this receiver existed. Never crash here.
+            android.util.Log.w(
+                "VirtualScreenBoot",
+                "BootReceiver failed to start service",
+                t,
+            )
         }
     }
 }
