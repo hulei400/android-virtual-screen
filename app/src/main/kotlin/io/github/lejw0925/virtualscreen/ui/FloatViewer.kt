@@ -13,6 +13,7 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.Settings
@@ -32,6 +33,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.TextView
 import io.github.lejw0925.virtualscreen.VirtualScreenApplication
 import io.github.lejw0925.virtualscreen.backend.BackendOperation
@@ -86,6 +88,14 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
         private const val SIDE_LEFT = 0
         private const val SIDE_RIGHT = 1
+        /** #88: compact-menu item ids (long-press 收起). */
+        private const val MENU_APPS = 1
+        private const val MENU_PIP = 2
+        private const val MENU_VIEW_ONLY = 3
+        private const val MENU_SETTINGS = 4
+        private const val MENU_END = 5
+        /** #88: double-tap window to expand (a single tap triggered too easily). */
+        private const val DOUBLE_TAP_TIMEOUT_MS = 300L
     }
     private val windowManager = app.getSystemService(WindowManager::class.java)
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -136,9 +146,12 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private var collapsed = false
     /** #87: fullscreen (expanded) state. The float window morphs into a
      *  fullscreen viewer with a top bar (step + purpose + takeover +
-     *  shrink), like the reference video: tap the small window to expand,
-     *  tap 收起 to shrink back. While expanded, drag/resize/collapse are
-     *  off; the top bar's buttons are the only chrome. */
+     *  shrink), like the reference video: double-tap the small window to
+     *  expand (#88: a single tap triggered too easily), tap 收起 to
+     *  shrink back, long-press 收起 for a compact menu with the
+     *  fullscreen viewer's round-button card functions (#88). While
+     *  expanded, drag/resize/collapse are off; the top bar's buttons
+     *  are the only chrome. */
     private var expanded = false
     private var fsSavedX = 0; private var fsSavedY = 0; private var fsSavedW = 0; private var fsSavedH = 0
     private var topBar: LinearLayout? = null
@@ -153,6 +166,8 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private var rootBackground: GradientDrawable? = null
     private var collapsedSide = SIDE_LEFT
     private var collapsedDuringDrag = false
+    /** #88: uptime of the last tap that did not expand (first tap of a double-tap). */
+    private var lastTapUpTime = 0L
     private var savedX = 0; private var savedY = 0; private var savedW = 0; private var savedH = 0
     private var downRawX = 0f; private var downRawY = 0f; private var downWinX = 0; private var downWinY = 0
     private var downWinH = 0
@@ -250,11 +265,18 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                     resizing = false
                     saveSize()
                 } else if (!moved) {
-                    // #87: a tap on the small window expands it to
-                    // fullscreen (with the step bar), like the reference
-                    // video. In control mode taps go to the content instead
-                    // and never reach here, so this only fires view-only.
-                    expandToFullscreen()
+                    // #88: double-tap the small window to expand it to
+                    // fullscreen. A single tap triggered too easily (a tap
+                    // meant to focus the window, or a stray touch, blew it
+                    // up to fullscreen). The first tap only arms the
+                    // double-tap; the second tap within 300ms expands.
+                    val now = SystemClock.uptimeMillis()
+                    if (now - lastTapUpTime < DOUBLE_TAP_TIMEOUT_MS) {
+                        lastTapUpTime = 0L
+                        expandToFullscreen()
+                    } else {
+                        lastTapUpTime = now
+                    }
                 } else if (snapped) {
                     // Collapsed mid-drag: glue the bar to the edge at once. It
                     // used to keep following the finger after collapsing, so it
@@ -615,6 +637,10 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         }
         val takeover = barButton(l.text("接管", "Take over", "接管")) { setControlModeExternal(!controlMode) }
         val shrink = barButton(l.text("收起", "Shrink", "收起")) { shrinkToFloat() }
+        // #88: long-press 收起 opens a compact menu with the functions from
+        // the fullscreen viewer's round-button card (应用 / 画中画 / 只看 /
+        // 设置 / 结束). A single tap still just shrinks back to the small window.
+        shrink.setOnLongClickListener { showCompactMenu(shrink); true }
         bar.addView(step)
         bar.addView(purpose)
         bar.addView(takeover)
@@ -664,7 +690,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             btn.background = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; setColor(0xFF1A73E8.toInt()); cornerRadius = 18f * d }
         }
     }
-    /** Tap the small window: morph it into the fullscreen viewer. */
+    /** Double-tap the small window: morph it into the fullscreen viewer. */
     private fun expandToFullscreen() {
         val p = params ?: return
         if (expanded || collapsed) return
@@ -690,6 +716,65 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             topBar?.visibility = View.GONE
         }
         app.activityLog.runtime("float_viewer", "fullscreen", "shrunk")
+    }
+    /** #88: compact menu (long-press 收起) with the functions from the
+     *  fullscreen viewer's round-button card, so they are reachable from
+     *  the fullscreen float window without going back to the main viewer.
+     *  Single-tap 收起 still just shrinks. 画中画 only appears when PiP
+     *  is enabled in settings. */
+    private fun showCompactMenu(anchor: View) {
+        val l = systemLanguage(app)
+        val popup = PopupMenu(app, anchor)
+        popup.menu.add(0, MENU_APPS, 0, l.text("应用", "Apps", "應用"))
+        if (app.settings.flow.value.pipEnabled) {
+            popup.menu.add(0, MENU_PIP, 1, l.text("画中画", "PiP", "子母畫面"))
+        }
+        popup.menu.add(0, MENU_VIEW_ONLY, 2, l.text(if (controlMode) "只看中" else "只看", if (controlMode) "View only" else "View only", if (controlMode) "僅觀看" else "僅觀看"))
+        popup.menu.add(0, MENU_SETTINGS, 3, l.text("设置", "Settings", "設定"))
+        popup.menu.add(0, MENU_END, 4, l.text("结束", "End", "結束"))
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                MENU_APPS -> openAppChooser()
+                MENU_PIP -> enterPip()
+                MENU_VIEW_ONLY -> setControlModeExternal(!controlMode)
+                MENU_SETTINGS -> openSettings()
+                MENU_END -> endSession()
+            }
+            true
+        }
+        popup.show()
+        app.activityLog.runtime("float_viewer", "menu", "shown")
+    }
+    /** Ask MainActivity to open the app picker (same list as the round
+     *  button card's 应用). MainActivity reads app.showAppChooser and
+     *  loads the app list itself. */
+    private fun openAppChooser() {
+        app.showAppChooser.value = true
+        app.startActivity(Intent(app, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        })
+    }
+    /** Enter PiP: hide the float window, let MainActivity take it from there. */
+    private fun enterPip() {
+        hide()
+        app.startActivity(Intent(app, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            putExtra("pip", true)
+        })
+    }
+    private fun openSettings() {
+        app.startActivity(Intent(app, SettingsActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        })
+    }
+    /** End the virtual-screen session (same as the card's 结束), then hide. */
+    private fun endSession() {
+        val sessionId = app.sessions.state.value.sessionId
+        if (sessionId == null) { hide(); return }
+        scope.launch {
+            runCatching { app.sessions.closeFromPhone(sessionId) }
+            hide()
+        }
     }
     /** Animate the window rect and corner radius together (~300ms,
      *  decelerating). Cancels any in-flight expand/shrink first. */

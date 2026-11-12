@@ -362,6 +362,16 @@ internal suspend fun phoneInput(app: VirtualScreenApplication,operation: Backend
     var viewerSize by remember { mutableStateOf(IntSize.Zero) }
     var error by remember { mutableStateOf<String?>(null) }; var busy by remember { mutableStateOf(false) }; var applications by remember { mutableStateOf(emptyList<DiscoveredApplication>()) }
     val task: (suspend () -> Unit) -> Unit={ block -> scope.launch { busy=true; try { withContext(Dispatchers.IO) { app.runtimeWork { app.awaitShutdown(); block() } } } catch(c: CancellationException) { throw c } catch(e: Exception) { error=e.code() } finally { busy=false } } }
+    // #88: the float window's compact menu (long-press 收起 → 应用) asks
+    // MainActivity to open the app picker. Load the app list the same way
+    // the round-button card's 应用 does, then show the picker.
+    val showChooser by app.showAppChooser.collectAsState()
+    LaunchedEffect(showChooser) {
+        if (showChooser) {
+            app.showAppChooser.value = false
+            task { applications = app.sessions.discoverApplications(includeIcons = true).filter { it.exported && it.packageName != app.packageName }; chooseApp = true }
+        }
+    }
     fun localInput(op: BackendOperation) { task { app.sessions.phoneTakeover(); phoneInput(app,op) } }
     // IME bridge for the fullscreen viewer: the system keyboard never appears
     // for the virtual display's fields on its own, so typing goes through a
