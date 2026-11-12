@@ -12,7 +12,9 @@ import io.github.lejw0925.virtualscreen.backend.NodeInfo
 import io.github.lejw0925.virtualscreen.backend.NodeActionInfo
 import io.github.lejw0925.virtualscreen.backend.NodeSnapshot
 import io.github.lejw0925.virtualscreen.backend.WindowSnapshot
+import android.content.Intent
 import io.github.lejw0925.virtualscreen.VirtualScreenApplication
+import io.github.lejw0925.virtualscreen.VirtualScreenForegroundService
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -32,6 +34,23 @@ class ScreenAccessibilityService : AccessibilityService() {
         current = this
         mutableConnected.value = true
         log("connected")
+        // Boot fallback: the system starts this accessibility service on
+        // boot even when ColorOS blocks BOOT_COMPLETED for the app
+        // (verified 2026-11-12: BootReceiver never fired on two real
+        // reboots despite auto-start ON, while this service did start).
+        // If the user had MCP enabled, bring the foreground service up
+        // here; its onCreate restores MCP only when mcpWanted is true.
+        val app = application as? VirtualScreenApplication
+        if (app?.mcpWanted == true) {
+            try {
+                app.startForegroundService(
+                    Intent(app, VirtualScreenForegroundService::class.java),
+                )
+            } catch (t: Throwable) {
+                // A missed boot start just means the user opens the app
+                // once, the same as before. Never crash here.
+            }
+        }
     }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() { log("interrupted"); clear() }
