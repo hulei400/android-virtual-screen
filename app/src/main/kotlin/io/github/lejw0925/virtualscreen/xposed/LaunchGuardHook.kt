@@ -177,13 +177,25 @@ class LaunchGuardHook : IXposedHookLoadPackage {
          * and fell through to the expensive task enumeration. Any failure
          * returns true (fail open to the full task check, never skip the
          * guard on a lookup error).
+         *
+         * Note: ServiceManager.getService("display") returns an IBinder
+         * whose runtime class is DisplayManagerService$BinderService, and
+         * getDisplayIds is NOT a public method on that class (that was
+         * the #80 live failure: NoSuchMethodException on every launcher
+         * tap, so the fast path never ran). Go through
+         * IDisplayManager.Stub.asInterface(binder) to get a proper
+         * IDisplayManager proxy, then call getDisplayIds on it.
          */
         private fun hasNonPrimaryDisplay(): Boolean {
             return try {
                 val serviceManager = Class.forName("android.os.ServiceManager")
                 val getService = serviceManager.getMethod("getService", String::class.java)
-                val displayService = getService.invoke(null, "display") ?: return true
-                val displayIds = displayService.javaClass.getMethod("getDisplayIds").invoke(displayService) as? IntArray ?: return true
+                val binder = getService.invoke(null, "display") as? android.os.IBinder ?: return true
+                val stubClass = Class.forName("android.hardware.display.IDisplayManager\$Stub")
+                val asInterface = stubClass.getMethod("asInterface", android.os.IBinder::class.java)
+                val idm = asInterface.invoke(null, binder) ?: return true
+                val idmClass = Class.forName("android.hardware.display.IDisplayManager")
+                val displayIds = idmClass.getMethod("getDisplayIds").invoke(idm) as? IntArray ?: return true
                 displayIds.any { it != Display.DEFAULT_DISPLAY }
             } catch (t: Throwable) {
                 XposedBridge.log(t)
