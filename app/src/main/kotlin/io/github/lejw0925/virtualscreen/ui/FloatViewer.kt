@@ -638,17 +638,40 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             }
         }
         val takeover = barButton(l.text("接管", "Take over", "接管")) { setControlModeExternal(!controlMode) }
-        val shrink = barButton(l.text("收起", "Shrink", "收起")) { shrinkToFloat() }
-        // #88: long-press 收起 opens a compact menu with the functions from
-        // the fullscreen viewer's round-button card (应用 / 画中画 / 只看 /
-        // 设置 / 结束). A single tap still just shrinks back to the small window.
-        shrink.setOnLongClickListener { showCompactMenu(shrink); true }
+        val shrink = shrinkIconButton()
         bar.addView(step)
         bar.addView(purpose)
         bar.addView(takeover)
         bar.addView(shrink)
         stepText = step; purposeText = purpose; takeoverBtn = takeover
         return bar
+    }
+    /** #88 fix 3: the 收起 button is an icon, not text (user 2026-11-13):
+     *  a small frosted-glass circle with a down chevron (⌄) — easy to
+     *  understand, and its translucency barely blocks the view. Single tap
+     *  shrinks back to the small window; long-press opens the compact menu
+     *  (same as before). */
+    private fun shrinkIconButton(): TextView {
+        val d = density
+        val size = (40f * d).roundToInt()
+        return TextView(app).apply {
+            text = "⌄"
+            textSize = 22f
+            setTextColor(0xFFFFFFFF.toInt())
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                // Frosted glass: translucent white over the dark bar, with
+                // a faint white rim so the circle reads against any content.
+                setColor(0x55FFFFFF)
+                setStroke((1f * d).roundToInt(), 0x88FFFFFF)
+            }
+            layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                setMargins((4f * d).roundToInt(), 0, 0, 0)
+            }
+            setOnClickListener { shrinkToFloat() }
+            setOnLongClickListener { showCompactMenu(this); true }
+        }
     }
     private fun barButton(text: String, onClick: () -> Unit): Button {
         val d = density
