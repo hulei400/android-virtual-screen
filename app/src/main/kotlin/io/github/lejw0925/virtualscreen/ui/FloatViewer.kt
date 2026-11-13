@@ -664,7 +664,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                 // Frosted glass: translucent white over the dark bar, with
                 // a faint white rim so the circle reads against any content.
                 setColor(0x55FFFFFF)
-                setStroke((1f * d).roundToInt(), 0x88FFFFFF)
+                setStroke((1f * d).roundToInt(), 0x88FFFFFF.toInt())
             }
             layoutParams = LinearLayout.LayoutParams(size, size).apply {
                 setMargins((4f * d).roundToInt(), 0, 0, 0)
