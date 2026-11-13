@@ -90,8 +90,9 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
         private const val SIDE_LEFT = 0
         private const val SIDE_RIGHT = 1
-        /** #88: compact-menu item ids (long-press 收起). */
-        private const val MENU_TAKEOVER = 1
+        /** #88: compact-menu item ids (long-press 收起). 接管 was removed
+         *  in #88 fix 6 (user 2026-11-13) — the shrink circle's colour now
+         *  shows takeover state instead of a separate button. */
         private const val MENU_APPS = 2
         private const val MENU_PIP = 3
         private const val MENU_SETTINGS = 4
@@ -146,22 +147,28 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     private var stateJob: Job? = null
     private var previewJob: Job? = null
     private var activityJob: Job? = null
+    /** #88 fix 6: watches the top app; shrinks the fullscreen viewer back
+     *  to the small window when the virtual display returns to the desktop
+     *  (home/launcher). */
+    private var homeJob: Job? = null
     private var live = false
     private var collapsed = false
     /** #87: fullscreen (expanded) state. The float window morphs into a
-     *  fullscreen viewer with a top bar (step + purpose + takeover +
-     *  shrink), like the reference video: double-tap the small window to
-     *  expand (#88: a single tap triggered too easily), tap 收起 to
-     *  shrink back, long-press 收起 for a compact menu with the
-     *  fullscreen viewer's round-button card functions (#88). While
-     *  expanded, drag/resize/collapse are off; the top bar's buttons
-     *  are the only chrome. */
+     *  fullscreen viewer with a top bar (step + purpose + shrink circle),
+     *  like the reference video: double-tap the small window to expand
+     *  (#88: a single tap triggered too easily), tap the shrink circle to
+     *  shrink back, long-press it for a compact menu (#88). The bar has no
+     *  background (#88 fix 6) and the circle's colour shows takeover state
+     *  (light blue = in control). While expanded, drag/resize/collapse are
+     *  off; the top bar is the only chrome. */
     private var expanded = false
     private var fsSavedX = 0; private var fsSavedY = 0; private var fsSavedW = 0; private var fsSavedH = 0
     private var topBar: LinearLayout? = null
     private var stepText: TextView? = null
     private var purposeText: TextView? = null
-    private var takeoverBtn: Button? = null
+    /** #88 fix 6: the shrink circle (replaces the old 接管 button as the
+     *  takeover indicator — light blue while in control mode). */
+    private var shrinkCircle: TextView? = null
     private var expandAnimator: ValueAnimator? = null
     /** Current corner radius, animated 16dp -> 0 on expand and back on
      *  shrink. The root background drawable and the outline both read it.
@@ -388,6 +395,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         stateJob?.cancel(); stateJob = null
         previewJob?.cancel(); previewJob = null
         activityJob?.cancel(); activityJob = null
+        homeJob?.cancel(); homeJob = null
         imeCheckJob?.cancel(); imeCheckJob = null
         root?.removeCallbacks(sinkRunnable)
         runCatching { app.unregisterComponentCallbacks(configCallbacks) }
@@ -395,7 +403,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         liveView?.dispose()
         liveView = null; imeSink = null
         root?.let { runCatching { windowManager.removeView(it) } }
-        root = null; content = null; triggerBar = null; topBar = null; stepText = null; purposeText = null; takeoverBtn = null; rootBackground = null; params = null
+        root = null; content = null; triggerBar = null; topBar = null; stepText = null; purposeText = null; shrinkCircle = null; rootBackground = null; params = null
         collapsed = false; collapsedDuringDrag = false
     }
 
@@ -409,7 +417,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         controlMode = on
         _controlModeFlow.value = on
         if (!on) { liveView?.cancelGesture(); closeImeBridge() }
-        updateTakeoverButton()
+        updateShrinkCircle()
         app.activityLog.runtime("float_viewer", "control_mode", if (on) "on" else "off")
     }
     /** Set control mode from outside the window (Fluid Cloud notification
@@ -564,6 +572,25 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         activityJob = scope.launch {
             runCatching { app.mcp.activity.collect { updateTopBar(it) } }
         }
+        // #88 fix 6: return to the desktop (home/launcher on top) auto-
+        // shrinks the fullscreen viewer back to the small window. Only
+        // fires when the top app actually changes to home, and only while
+        // expanded — expanding by hand while already on home stays put.
+        homeJob = scope.launch {
+            app.sessions.currentAppFlow.collect { current ->
+                val pkg = current?.packageName ?: return@collect
+                if (expanded && isHomeApp(pkg)) shrinkToFloat()
+            }
+        }
+    }
+    /** #88 fix 6: is this package the phone's home/launcher? Resolves the
+     *  HOME intent (the default desktop) and compares package names. */
+    private fun isHomeApp(packageName: String): Boolean {
+        val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        val homePkg = runCatching {
+            app.packageManager.resolveActivity(homeIntent, 0)?.activityInfo?.packageName
+        }.getOrNull()
+        return homePkg != null && homePkg == packageName
     }
     private fun collapseIfAtEdge(): Boolean {
         val p = params ?: return false
@@ -610,16 +637,20 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
     }
     // #87: fullscreen top bar + smooth expand/shrink, mirroring the
     // reference video: the small window morphs into a fullscreen viewer
-    // with a step bar (第 N 步 + current purpose), a takeover toggle and
-    // a shrink button. The bar is chrome (see isOnChrome), so its buttons
-    // work even in control mode.
+    // with a step bar (第 N 步 + current purpose) and a shrink circle.
+    // The bar is chrome (see isOnChrome), so its buttons work even in
+    // control mode.
+    // #88 fix 6: the bar has NO background any more (user 2026-11-13) —
+    // the black strip is gone, so the step text and the shrink circle just
+    // float over the app. The text carries a shadow so white stays readable
+    // over light content. The 接管 button is gone too; the shrink circle's
+    // colour now shows takeover state (light blue = in control).
     private fun buildTopBar(): LinearLayout {
         val d = density
         val l = systemLanguage(app)
         val bar = LinearLayout(app).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(0xCC1F1F1F.toInt())
             setPadding((12f * d).roundToInt(), (8f * d).roundToInt(), (12f * d).roundToInt(), (8f * d).roundToInt())
             layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.TOP }
             visibility = View.GONE
@@ -628,31 +659,33 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             textSize = 15f
             setTextColor(0xFFFFFFFF.toInt())
             setTypeface(typeface, android.graphics.Typeface.BOLD)
+            // No bar background any more: a soft shadow keeps the white
+            // text readable over light app content.
+            setShadowLayer(4f, 0f, 2f, 0xAA000000.toInt())
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         }
         val purpose = TextView(app).apply {
             textSize = 14f
             setTextColor(0xFFE0E0E0.toInt())
+            setShadowLayer(4f, 0f, 2f, 0xAA000000.toInt())
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
                 setMargins((10f * d).roundToInt(), 0, (10f * d).roundToInt(), 0)
             }
         }
-        val takeover = barButton(l.text("接管", "Take over", "接管")) { setControlModeExternal(!controlMode) }
         val shrink = shrinkIconButton()
         // #88 fix 4: the top bar is draggable — drag it and the whole bar
-        // (step status + 接管 + 收起) moves together, so the user can slide
-        // it out of the way of whatever they are looking at. The buttons
-        // keep their own taps (they consume the touch first); dragging works
-        // on the bar's text/empty area, even when the step status is hidden.
+        // (step status + 收起) moves together, so the user can slide it out
+        // of the way of whatever they are looking at. Dragging works on the
+        // bar's text/empty area, even when the step status is hidden.
         makeBarDraggable(bar)
         bar.addView(step)
         bar.addView(purpose)
-        bar.addView(takeover)
         bar.addView(shrink)
-        stepText = step; purposeText = purpose; takeoverBtn = takeover
+        stepText = step; purposeText = purpose; shrinkCircle = shrink
         applyStepVisibility()
+        updateShrinkCircle()
         return bar
     }
     /** #88 fix 4: make the fullscreen top bar draggable. Dragging it moves
@@ -702,23 +735,21 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         stepText?.visibility = if (show) View.VISIBLE else View.GONE
         purposeText?.visibility = if (show) View.VISIBLE else View.GONE
     }
-    /** #88 fix 3: the 收起 button is an icon, not text (user 2026-11-13):
-     *  a small frosted-glass circle with a down chevron (⌄) — easy to
-     *  understand, and its translucency barely blocks the view. Single tap
-     *  shrinks back to the small window; long-press opens the compact menu
-     *  (same as before). */
+    /** #88 fix 3 + fix 6: the 收起 button is a plain frosted-glass circle,
+     *  no text and no symbol (user 2026-11-13 — the ⌄ is gone). Single tap
+     *  shrinks back to the small window; long-press opens the compact menu.
+     *  Its colour expresses takeover state (fix 6): light blue while in
+     *  control mode, translucent white while view-only — see
+     *  [updateShrinkCircle]. */
     private fun shrinkIconButton(): TextView {
         val d = density
         val size = (40f * d).roundToInt()
         return TextView(app).apply {
-            text = "⌄"
-            textSize = 22f
-            setTextColor(0xFFFFFFFF.toInt())
             gravity = Gravity.CENTER
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                // Frosted glass: translucent white over the dark bar, with
-                // a faint white rim so the circle reads against any content.
+                // Frosted glass: translucent white, with a faint white rim
+                // so the circle reads against any content.
                 setColor(0x55FFFFFF)
                 setStroke((1f * d).roundToInt(), 0x88FFFFFF.toInt())
             }
@@ -729,22 +760,24 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             setOnLongClickListener { showCompactMenu(this); true }
         }
     }
-    private fun barButton(text: String, onClick: () -> Unit): Button {
+    /** #88 fix 6: the shrink circle's colour expresses takeover state, now
+     *  that the separate 接管 button is gone. Light blue = the user is in
+     *  control (takeover); translucent white = view-only. Called whenever
+     *  control mode flips (setControlMode) and when the top bar is built. */
+    private fun updateShrinkCircle() {
+        val circle = shrinkCircle ?: return
         val d = density
-        return Button(app).apply {
-            this.text = text
-            textSize = 14f
-            setTextColor(0xFFFFFFFF.toInt())
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                setColor(0xFF3C4043.toInt())
-                cornerRadius = 18f * d
+        circle.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            if (controlMode) {
+                // In control (takeover): light blue.
+                setColor(0xFF90CAF9.toInt())
+                setStroke((1f * d).roundToInt(), 0xFFFFFFFF.toInt())
+            } else {
+                // View-only: frosted translucent white.
+                setColor(0x55FFFFFF)
+                setStroke((1f * d).roundToInt(), 0x88FFFFFF.toInt())
             }
-            setPadding((14f * d).roundToInt(), (6f * d).roundToInt(), (14f * d).roundToInt(), (6f * d).roundToInt())
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                setMargins((4f * d).roundToInt(), 0, 0, 0)
-            }
-            setOnClickListener { onClick() }
         }
     }
     /** Refresh the top bar from the latest MCP activity. No-op while the
@@ -757,20 +790,6 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         val purpose = activity?.purpose?.takeIf { it.isNotBlank() }
         purposeText?.text = purpose ?: l.text("MCP 已就绪", "MCP ready", "MCP 已就緒")
     }
-    /** Takeover button label + colour follow control mode: 接管 (accent)
-     *  while view-only, 只看 (neutral) while the user is operating. */
-    private fun updateTakeoverButton() {
-        val btn = takeoverBtn ?: return
-        val d = density
-        val l = systemLanguage(app)
-        if (controlMode) {
-            btn.text = l.text("只看", "View only", "僅觀看")
-            btn.background = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; setColor(0xFF3C4043.toInt()); cornerRadius = 18f * d }
-        } else {
-            btn.text = l.text("接管", "Take over", "接管")
-            btn.background = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; setColor(0xFF1A73E8.toInt()); cornerRadius = 18f * d }
-        }
-    }
     /** Double-tap the small window: morph it into the fullscreen viewer. */
     private fun expandToFullscreen() {
         val p = params ?: return
@@ -779,7 +798,7 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         expanded = true
         topBar?.visibility = View.VISIBLE
         updateTopBar(runCatching { app.mcp.activity.value }.getOrNull())
-        updateTakeoverButton()
+        updateShrinkCircle()
         val from = android.graphics.Rect(p.x, p.y, p.x + p.width, p.y + p.height)
         val to = android.graphics.Rect(0, 0, screenW, screenH)
         animateWindowRect(from, to, cornerPx, 0f)
@@ -809,12 +828,11 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
      *  found blocking the view. This one has a transparent window
      *  background and no dim, so the menu floats over the content.
      *  The items are beautified (user 2026-11-13): white rounded card,
-     *  comfortable touch targets, a light press highlight, thin dividers,
-     *  and 接管 in blue as the primary action.
+     *  comfortable touch targets, a light press highlight, thin dividers.
      *
-     *  Menu order (user 2026-11-13): 接管 at the top, then 应用， 设置，
-     *  结束. 只看 is gone — 接管 is the single control toggle (same as
-     *  the top bar button); its label follows the current mode. */
+     *  Menu order: 隐藏步骤/显示步骤， 应用， 设置， 结束. 接管 was removed
+     *  in #88 fix 6 (user 2026-11-13) — the shrink circle's colour now
+     *  shows takeover state instead of a separate button. */
     private fun showCompactMenu(anchor: View) {
         val l = systemLanguage(app)
         val d = density
@@ -825,7 +843,9 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                 setColor(0xFFFFFFFF.toInt())
                 cornerRadius = 16f * d
             }
-            setPadding((6f * d).roundToInt(), (6f * d).roundToInt(), (6f * d).roundToInt(), (6f * d).roundToInt())
+            // #88 fix 6: shorter card (user 2026-11-13) — tighter padding
+            // so the menu does not stretch so tall.
+            setPadding((4f * d).roundToInt(), (4f * d).roundToInt(), (4f * d).roundToInt(), (4f * d).roundToInt())
         }
         // Pressed-state background for a menu item: light gray rounded
         // highlight, transparent when idle.
@@ -846,10 +866,6 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             }
         }
         val items = mutableListOf<Pair<Int, Pair<String, Int>>>()
-        // 接管 first (primary action, blue). Always labeled 接管 (the
-        // user dropped 只看); it toggles control mode, same as the top
-        // bar button, whose label already shows the current mode.
-        items.add(MENU_TAKEOVER to (l.text("接管", "Take over", "接管") to 0xFF1A73E8.toInt()))
         // #88 fix 5: step-status toggle — hides/shows the 第 N 步 + purpose
         // in the top bar. Label shows the action it will take.
         val stepLabel = if (app.settings.flow.value.showStepStatus) l.text("隐藏步骤", "Hide step", "隱藏步驟") else l.text("显示步骤", "Show step", "顯示步驟")
@@ -869,14 +885,15 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                 textSize = 16f
                 setTextColor(color)
                 gravity = Gravity.CENTER_VERTICAL
-                minHeight = (48f * d).roundToInt()
-                setPadding((18f * d).roundToInt(), (12f * d).roundToInt(), (18f * d).roundToInt(), (12f * d).roundToInt())
+                // #88 fix 6: shorter card — 40dp rows instead of 48dp, and
+                // less vertical padding, so the menu is more compact.
+                minHeight = (40f * d).roundToInt()
+                setPadding((18f * d).roundToInt(), (8f * d).roundToInt(), (18f * d).roundToInt(), (8f * d).roundToInt())
                 background = itemBackground()
                 isClickable = true
                 setOnClickListener {
                     popup?.dismiss()
                     when (id) {
-                        MENU_TAKEOVER -> setControlModeExternal(!controlMode)
                         MENU_STEP -> {
                             // #88 fix 5: flip the step-status visibility and
                             // persist it, so the choice survives restarts.
@@ -917,7 +934,9 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
      *  MainActivity hid the float window (its onResume hides it) and the
      *  picker never stayed usable — tapping 应用 just dropped straight
      *  back to the small window. Here the picker stays in the float view;
-     *  picking an app launches it on the virtual display. */
+     *  picking an app launches it on the virtual display.
+     *  #88 fix 6: a search field on top filters the list by app name or
+     *  package (user 2026-11-13), so a long app list is quick to narrow. */
     private fun showAppPicker() {
         scope.launch {
             val apps = withContext(Dispatchers.IO) {
@@ -928,22 +947,59 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             }
             if (apps.isEmpty()) return@launch
             val l = systemLanguage(app)
+            val d = density
+            val layout = LinearLayout(app).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding((16f * d).roundToInt(), (8f * d).roundToInt(), (16f * d).roundToInt(), 0)
+            }
+            val search = EditText(app).apply {
+                hint = l.text("搜索应用", "Search apps", "搜尋應用")
+                textSize = 16f
+                setSingleLine()
+                setPadding((12f * d).roundToInt(), (10f * d).roundToInt(), (12f * d).roundToInt(), (10f * d).roundToInt())
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    setColor(0xFFF0F0F0.toInt())
+                    cornerRadius = 10f * d
+                }
+            }
+            layout.addView(search, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            val listView = android.widget.ListView(app).apply {
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (320f * d).roundToInt())
+            }
+            layout.addView(listView)
+            var filtered = apps
+            val adapter = android.widget.ArrayAdapter<String>(app, android.R.layout.simple_list_item_1, filtered.map { it.label })
+            listView.adapter = adapter
+            search.addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    val q = s?.toString()?.trim().orEmpty()
+                    filtered = if (q.isEmpty()) apps else apps.filter { it.label.contains(q, ignoreCase = true) || it.packageName.contains(q, ignoreCase = true) }
+                    adapter.clear()
+                    adapter.addAll(filtered.map { it.label })
+                    adapter.notifyDataSetChanged()
+                }
+            })
             val dialog = android.app.AlertDialog.Builder(app)
                 .setTitle(l.text("选择应用", "Choose app", "選擇應用"))
-                .setItems(apps.map { it.label }.toTypedArray()) { _, which ->
-                    val item = apps[which]
-                    scope.launch {
-                        runCatching {
-                            phoneControl(app) { lease ->
-                                val result = app.sessions.launch(lease.owner, lease.token, item.component)
-                                check(result.ok) { result.code ?: "LAUNCH_FAILED" }
-                                app.settings.update { it.copy(lastComponent = item.component) }
-                            }
+                .setView(layout)
+                .setNegativeButton(l.text("取消", "Cancel", "取消"), null)
+                .create()
+            listView.setOnItemClickListener { _, _, position, _ ->
+                val item = filtered.getOrNull(position) ?: return@setOnItemClickListener
+                dialog.dismiss()
+                scope.launch {
+                    runCatching {
+                        phoneControl(app) { lease ->
+                            val result = app.sessions.launch(lease.owner, lease.token, item.component)
+                            check(result.ok) { result.code ?: "LAUNCH_FAILED" }
+                            app.settings.update { it.copy(lastComponent = item.component) }
                         }
                     }
                 }
-                .setNegativeButton(l.text("取消", "Cancel", "取消"), null)
-                .create()
+            }
             // Showing from the Application context, so the dialog must be
             // an overlay window or it cannot appear above the float window.
             dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
