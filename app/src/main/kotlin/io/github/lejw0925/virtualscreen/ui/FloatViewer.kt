@@ -639,12 +639,54 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         }
         val takeover = barButton(l.text("接管", "Take over", "接管")) { setControlModeExternal(!controlMode) }
         val shrink = shrinkIconButton()
+        // #88 fix 4: the top bar is draggable — drag the step/purpose text
+        // and the whole bar (step status + 接管 + 收起) moves together, so
+        // the user can slide it out of the way of whatever they are looking
+        // at. The buttons stay tappable; only the text area drags.
+        makeBarDraggable(bar, step, purpose)
         bar.addView(step)
         bar.addView(purpose)
         bar.addView(takeover)
         bar.addView(shrink)
         stepText = step; purposeText = purpose; takeoverBtn = takeover
         return bar
+    }
+    /** #88 fix 4: make the fullscreen top bar draggable by its text area.
+     *  Dragging the step/purpose text moves the whole bar (step status,
+     *  接管， 收起） together, vertically, and it stays where the user
+     *  drops it — so it can be slid out of the way of the content underneath.
+     *  The 接管/收起 buttons keep their own taps; only the text drags. */
+    private fun makeBarDraggable(bar: LinearLayout, vararg handles: View) {
+        val d = density
+        val slop = (8f * d).roundToInt()
+        var downY = 0f
+        var startTy = 0f
+        var dragging = false
+        val listener = View.OnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downY = event.rawY
+                    startTy = bar.translationY
+                    dragging = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dy = event.rawY - downY
+                    if (!dragging && kotlin.math.abs(dy) > slop) dragging = true
+                    if (dragging) {
+                        val maxTy = (screenH - bar.height).coerceAtLeast(0).toFloat()
+                        bar.translationY = (startTy + dy).coerceIn(0f, maxTy)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    dragging = false
+                    true
+                }
+                else -> false
+            }
+        }
+        for (h in handles) h.setOnTouchListener(listener)
     }
     /** #88 fix 3: the 收起 button is an icon, not text (user 2026-11-13):
      *  a small frosted-glass circle with a down chevron (⌄) — easy to
