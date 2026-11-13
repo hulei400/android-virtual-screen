@@ -96,6 +96,8 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         private const val MENU_PIP = 3
         private const val MENU_SETTINGS = 4
         private const val MENU_END = 5
+        /** #88 fix 5: toggle for showing/hiding the step status in the top bar. */
+        private const val MENU_STEP = 6
         /** #88: double-tap window to expand (a single tap triggered too easily). */
         private const val DOUBLE_TAP_TIMEOUT_MS = 300L
     }
@@ -639,30 +641,34 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         }
         val takeover = barButton(l.text("接管", "Take over", "接管")) { setControlModeExternal(!controlMode) }
         val shrink = shrinkIconButton()
-        // #88 fix 4: the top bar is draggable — drag the step/purpose text
-        // and the whole bar (step status + 接管 + 收起) moves together, so
-        // the user can slide it out of the way of whatever they are looking
-        // at. The buttons stay tappable; only the text area drags.
-        makeBarDraggable(bar, step, purpose)
+        // #88 fix 4: the top bar is draggable — drag it and the whole bar
+        // (step status + 接管 + 收起) moves together, so the user can slide
+        // it out of the way of whatever they are looking at. The buttons
+        // keep their own taps (they consume the touch first); dragging works
+        // on the bar's text/empty area, even when the step status is hidden.
+        makeBarDraggable(bar)
         bar.addView(step)
         bar.addView(purpose)
         bar.addView(takeover)
         bar.addView(shrink)
         stepText = step; purposeText = purpose; takeoverBtn = takeover
+        applyStepVisibility()
         return bar
     }
-    /** #88 fix 4: make the fullscreen top bar draggable by its text area.
-     *  Dragging the step/purpose text moves the whole bar (step status,
-     *  接管， 收起） together, vertically, and it stays where the user
-     *  drops it — so it can be slid out of the way of the content underneath.
-     *  The 接管/收起 buttons keep their own taps; only the text drags. */
-    private fun makeBarDraggable(bar: LinearLayout, vararg handles: View) {
+    /** #88 fix 4: make the fullscreen top bar draggable. Dragging it moves
+     *  the whole bar (step status, 接管， 收起） together, vertically, and
+     *  it stays where the user drops it — so it can be slid out of the way
+     *  of the content underneath. The listener sits on the bar itself: the
+     *  接管/收起 buttons consume their own touches first, so their taps
+     *  still work, and dragging keeps working even when the step status is
+     *  hidden (#88 fix 5) because the bar itself is always there. */
+    private fun makeBarDraggable(bar: LinearLayout) {
         val d = density
         val slop = (8f * d).roundToInt()
         var downY = 0f
         var startTy = 0f
         var dragging = false
-        val listener = View.OnTouchListener { _, event ->
+        bar.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     downY = event.rawY
@@ -686,7 +692,15 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                 else -> false
             }
         }
-        for (h in handles) h.setOnTouchListener(listener)
+    }
+    /** #88 fix 5: show or hide the step status (第 N 步 + purpose) in the
+     *  top bar, from the showStepStatus setting. When hidden, the bar is
+     *  just the 接管 button and the 收起 circle — minimal, barely blocking
+     *  the view. The bar stays draggable either way (see makeBarDraggable). */
+    private fun applyStepVisibility() {
+        val show = app.settings.flow.value.showStepStatus
+        stepText?.visibility = if (show) View.VISIBLE else View.GONE
+        purposeText?.visibility = if (show) View.VISIBLE else View.GONE
     }
     /** #88 fix 3: the 收起 button is an icon, not text (user 2026-11-13):
      *  a small frosted-glass circle with a down chevron (⌄) — easy to
@@ -836,6 +850,10 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         // user dropped 只看); it toggles control mode, same as the top
         // bar button, whose label already shows the current mode.
         items.add(MENU_TAKEOVER to (l.text("接管", "Take over", "接管") to 0xFF1A73E8.toInt()))
+        // #88 fix 5: step-status toggle — hides/shows the 第 N 步 + purpose
+        // in the top bar. Label shows the action it will take.
+        val stepLabel = if (app.settings.flow.value.showStepStatus) l.text("隐藏步骤", "Hide step", "隱藏步驟") else l.text("显示步骤", "Show step", "顯示步驟")
+        items.add(MENU_STEP to (stepLabel to 0xFF1F1F1F.toInt()))
         items.add(MENU_APPS to (l.text("应用", "Apps", "應用") to 0xFF1F1F1F.toInt()))
         if (app.settings.flow.value.pipEnabled) {
             items.add(MENU_PIP to (l.text("画中画", "PiP", "子母畫面") to 0xFF1F1F1F.toInt()))
@@ -859,6 +877,12 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
                     popup?.dismiss()
                     when (id) {
                         MENU_TAKEOVER -> setControlModeExternal(!controlMode)
+                        MENU_STEP -> {
+                            // #88 fix 5: flip the step-status visibility and
+                            // persist it, so the choice survives restarts.
+                            app.settings.update { it.copy(showStepStatus = !it.showStepStatus) }
+                            applyStepVisibility()
+                        }
                         MENU_APPS -> showAppPicker()
                         MENU_PIP -> enterPip()
                         MENU_SETTINGS -> openSettings()
