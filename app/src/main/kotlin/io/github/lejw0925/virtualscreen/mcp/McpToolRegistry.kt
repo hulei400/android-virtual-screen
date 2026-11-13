@@ -19,7 +19,7 @@ import org.json.JSONObject
 import kotlin.coroutines.coroutineContext
 
 data class McpTool(val name: String,val description: String,val schema: JSONObject,val readOnly: Boolean = false)
-data class ToolActivity(val id: String,val owner: String,val tool: String,val purpose: String,val phase: String,val code: String? = null,val step: Int = 0)
+data class ToolActivity(val id: String,val owner: String,val tool: String,val purpose: String,val phase: String,val code: String? = null)
 
 class McpToolRegistry(private val sessions: VirtualScreenSessionManager,
     private val approvals: ControlApprovalManager = ControlApprovalManager(sessions),
@@ -28,11 +28,6 @@ class McpToolRegistry(private val sessions: VirtualScreenSessionManager,
     private val defaultOperationObservation = "tree"
     private val current=MutableStateFlow<ToolActivity?>(null)
     val activity=current.asStateFlow()
-    /** Operation step counter (#87): increments on each real operation
-     *  (not on read-only status/receipt queries), shown as "第 N 步" in
-     *  the float window's fullscreen top bar. Reset on create_screen,
-     *  so each new display starts a fresh task at step 1. */
-    private val stepCounter = java.util.concurrent.atomic.AtomicInteger(0)
     private val receipts=RequestReceipts()
     fun forgetClient(owner: String) { receipts.forget(owner); approvals.forgetClient(owner) }
     private val lease=mapOf("lease_token" to string())
@@ -121,11 +116,7 @@ class McpToolRegistry(private val sessions: VirtualScreenSessionManager,
             validate(spec.schema,args)
             validateAction(name,args)
             receipts.record(owner,requestId,mapOf("tool" to name,"phase" to "running","execution_status" to "unknown"))
-            // #87: step counter. A new display starts a fresh task; status
-            // and receipt queries keep the current step instead of counting.
-            if (name == "create_screen") stepCounter.set(0)
-            val step = if (name in setOf("get_status", "get_request_receipt")) (current.value?.step ?: 0) else stepCounter.incrementAndGet()
-            activity=ToolActivity(UUID.randomUUID().toString(),owner,name,purpose,"running",step=step)
+            activity=ToolActivity(UUID.randomUUID().toString(),owner,name,purpose,"running")
             // Other clients' status queries and rejected lease requests must not
             // replace the purpose of the operation currently controlling the screen.
             current.update { previous ->
