@@ -219,8 +219,17 @@ class VirtualScreenApplication : Application() {
                     floatViewer.suppressAutoShow()
                 }
                 // An app is on top again: clear the suppression so the
-                // float window can come back.
-                if (id != null && !headless && currentApp != null && floatViewer.autoShowSuppressed && !floatViewer.isShowing) {
+                // float window can come back — but NOT while the user is
+                // in the fullscreen viewer. The viewer deliberately hid
+                // the float window when it resumed (the live mirror serves
+                // one viewer only); popping it back here is what makes
+                // 查看屏幕 bounce back to the small window on the first tap,
+                // and leaves a black float window on top of fullscreen on
+                // the second. Leaving fullscreen already re-shows the float
+                // window via MainActivity.onUserLeaveHint, so nothing is lost.
+                if (id != null && !headless && currentApp != null && floatViewer.autoShowSuppressed && !floatViewer.isShowing
+                    && resumedActivity !is io.github.lejw0925.virtualscreen.ui.MainActivity
+                ) {
                     showFloatWithRetry()
                 }
                 lastDisplayId = id
