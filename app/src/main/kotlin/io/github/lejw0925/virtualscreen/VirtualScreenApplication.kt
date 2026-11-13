@@ -35,10 +35,6 @@ class VirtualScreenApplication : Application() {
     val mcpChanging = mutableMcpChanging.asStateFlow()
     private val mutableRuntimeTasks = MutableStateFlow(0)
     val runtimeTasks = mutableRuntimeTasks.asStateFlow()
-    /** #88: set by the float window's compact menu (long-press 收起 → 应用)
-     *  to ask MainActivity to open the app picker. MainActivity consumes
-     *  it (loads the app list, shows the picker) and resets it. */
-    val showAppChooser = MutableStateFlow(false)
     suspend fun <T> runtimeWork(block: suspend () -> T): T {
         mutableRuntimeTasks.update { it + 1 }
         try { return block() }
