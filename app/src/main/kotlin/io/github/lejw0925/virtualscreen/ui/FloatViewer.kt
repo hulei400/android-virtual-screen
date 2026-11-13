@@ -3,9 +3,11 @@ package io.github.lejw0925.virtualscreen.ui
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
+import android.content.BroadcastReceiver
 import android.content.ComponentCallbacks
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Outline
@@ -151,6 +153,13 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
      *  to the small window when the virtual display returns to the desktop
      *  (home/launcher). */
     private var homeJob: Job? = null
+    /** #88 fix 7: the phone's own Home key/gesture never changes the
+     *  virtual display's top app, so homeJob can't see it. This receiver
+     *  listens for the system's home/recent-apps broadcast instead, so a
+     *  fullscreen viewer shrinks back to the small window when the user
+     *  leaves for the phone's own desktop (or Recents). Registered in
+     *  show(), unregistered in hide(). */
+    private var homeReceiver: BroadcastReceiver? = null
     private var live = false
     private var collapsed = false
     /** #87: fullscreen (expanded) state. The float window morphs into a
@@ -379,6 +388,27 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
             buildViews(state)
             app.registerComponentCallbacks(configCallbacks)
             startLoops()
+            // #88 fix 7: listen for the phone's Home / Recents. The
+            // virtual display's top app doesn't change when the user
+            // presses the phone's Home key, so homeJob alone never fires
+            // for it — without this the fullscreen viewer keeps covering
+            // the phone's desktop. Only shrinks while expanded; the small
+            // window and the collapsed side bar stay as they are.
+            homeReceiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    if (intent.action != Intent.ACTION_CLOSE_SYSTEM_DIALOGS) return
+                    when (intent.getStringExtra("reason")) {
+                        "homekey", "recentapps" -> if (expanded) shrinkToFloat()
+                    }
+                }
+            }
+            runCatching {
+                app.registerReceiver(
+                    homeReceiver,
+                    IntentFilter(Intent.ACTION_CLOSE_SYSTEM_DIALOGS),
+                    Context.RECEIVER_NOT_EXPORTED,
+                )
+            }
             true
         } catch (e: Exception) {
             app.activityLog.failure("float_viewer", e)
@@ -396,6 +426,8 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         previewJob?.cancel(); previewJob = null
         activityJob?.cancel(); activityJob = null
         homeJob?.cancel(); homeJob = null
+        homeReceiver?.let { runCatching { app.unregisterReceiver(it) } }
+        homeReceiver = null
         imeCheckJob?.cancel(); imeCheckJob = null
         root?.removeCallbacks(sinkRunnable)
         runCatching { app.unregisterComponentCallbacks(configCallbacks) }
