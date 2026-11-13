@@ -7,8 +7,10 @@ import android.content.ComponentCallbacks
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.PixelFormat
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Handler
@@ -33,7 +35,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.PopupMenu
+import android.widget.PopupWindow
 import android.widget.TextView
 import io.github.lejw0925.virtualscreen.VirtualScreenApplication
 import io.github.lejw0925.virtualscreen.backend.BackendOperation
@@ -89,9 +91,9 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
         private const val SIDE_LEFT = 0
         private const val SIDE_RIGHT = 1
         /** #88: compact-menu item ids (long-press 收起). */
-        private const val MENU_APPS = 1
-        private const val MENU_PIP = 2
-        private const val MENU_VIEW_ONLY = 3
+        private const val MENU_TAKEOVER = 1
+        private const val MENU_APPS = 2
+        private const val MENU_PIP = 3
         private const val MENU_SETTINGS = 4
         private const val MENU_END = 5
         /** #88: double-tap window to expand (a single tap triggered too easily). */
@@ -721,28 +723,104 @@ internal class FloatViewer(private val app: VirtualScreenApplication) {
      *  fullscreen viewer's round-button card, so they are reachable from
      *  the fullscreen float window without going back to the main viewer.
      *  Single-tap 收起 still just shrinks. 画中画 only appears when PiP
-     *  is enabled in settings. */
+     *  is enabled in settings.
+     *
+     *  #88 fix 2: built as a plain PopupWindow, not PopupMenu — PopupMenu
+     *  dims the content behind it with a light gray mask, which the user
+     *  found blocking the view. This one has a transparent window
+     *  background and no dim, so the menu floats over the content.
+     *  The items are beautified (user 2026-11-13): white rounded card,
+     *  comfortable touch targets, a light press highlight, thin dividers,
+     *  and 接管 in blue as the primary action.
+     *
+     *  Menu order (user 2026-11-13): 接管 at the top, then 应用， 设置，
+     *  结束. 只看 is gone — 接管 is the single control toggle (same as
+     *  the top bar button); its label follows the current mode. */
     private fun showCompactMenu(anchor: View) {
         val l = systemLanguage(app)
-        val popup = PopupMenu(app, anchor)
-        popup.menu.add(0, MENU_APPS, 0, l.text("应用", "Apps", "應用"))
-        if (app.settings.flow.value.pipEnabled) {
-            popup.menu.add(0, MENU_PIP, 1, l.text("画中画", "PiP", "子母畫面"))
-        }
-        popup.menu.add(0, MENU_VIEW_ONLY, 2, l.text(if (controlMode) "只看中" else "只看", if (controlMode) "View only" else "View only", if (controlMode) "僅觀看" else "僅觀看"))
-        popup.menu.add(0, MENU_SETTINGS, 3, l.text("设置", "Settings", "設定"))
-        popup.menu.add(0, MENU_END, 4, l.text("结束", "End", "結束"))
-        popup.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                MENU_APPS -> showAppPicker()
-                MENU_PIP -> enterPip()
-                MENU_VIEW_ONLY -> setControlModeExternal(!controlMode)
-                MENU_SETTINGS -> openSettings()
-                MENU_END -> endSession()
+        val d = density
+        val container = LinearLayout(app).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(0xFFFFFFFF.toInt())
+                cornerRadius = 16f * d
             }
-            true
+            setPadding((6f * d).roundToInt(), (6f * d).roundToInt(), (6f * d).roundToInt(), (6f * d).roundToInt())
         }
-        popup.show()
+        // Pressed-state background for a menu item: light gray rounded
+        // highlight, transparent when idle.
+        fun itemBackground(): android.graphics.drawable.StateListDrawable {
+            val pressed = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(0xFFF0F0F0.toInt())
+                cornerRadius = 10f * d
+            }
+            val normal = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(0x00000000)
+                cornerRadius = 10f * d
+            }
+            return android.graphics.drawable.StateListDrawable().apply {
+                addState(intArrayOf(android.R.attr.state_pressed), pressed)
+                addState(intArrayOf(), normal)
+            }
+        }
+        val items = mutableListOf<Pair<Int, Pair<String, Int>>>()
+        // 接管 first (primary action, blue). Always labeled 接管 (the
+        // user dropped 只看); it toggles control mode, same as the top
+        // bar button, whose label already shows the current mode.
+        items.add(MENU_TAKEOVER to (l.text("接管", "Take over", "接管") to 0xFF1A73E8.toInt()))
+        items.add(MENU_APPS to (l.text("应用", "Apps", "應用") to 0xFF1F1F1F.toInt()))
+        if (app.settings.flow.value.pipEnabled) {
+            items.add(MENU_PIP to (l.text("画中画", "PiP", "子母畫面") to 0xFF1F1F1F.toInt()))
+        }
+        items.add(MENU_SETTINGS to (l.text("设置", "Settings", "設定") to 0xFF1F1F1F.toInt()))
+        items.add(MENU_END to (l.text("结束", "End", "結束") to 0xFF1F1F1F.toInt()))
+        var popup: PopupWindow? = null
+        for ((index, entry) in items.withIndex()) {
+            val (id, textAndColor) = entry
+            val (text, color) = textAndColor
+            val tv = TextView(app).apply {
+                this.text = text
+                textSize = 16f
+                setTextColor(color)
+                gravity = Gravity.CENTER_VERTICAL
+                minHeight = (48f * d).roundToInt()
+                setPadding((18f * d).roundToInt(), (12f * d).roundToInt(), (18f * d).roundToInt(), (12f * d).roundToInt())
+                background = itemBackground()
+                isClickable = true
+                setOnClickListener {
+                    popup?.dismiss()
+                    when (id) {
+                        MENU_TAKEOVER -> setControlModeExternal(!controlMode)
+                        MENU_APPS -> showAppPicker()
+                        MENU_PIP -> enterPip()
+                        MENU_SETTINGS -> openSettings()
+                        MENU_END -> endSession()
+                    }
+                }
+            }
+            container.addView(tv)
+            // Thin divider between items, not after the last one.
+            if (index < items.size - 1) {
+                val divider = View(app).apply {
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (1f * d).roundToInt()).apply {
+                        leftMargin = (18f * d).roundToInt()
+                        rightMargin = (18f * d).roundToInt()
+                    }
+                    setBackgroundColor(0xFFE8E8E8.toInt())
+                }
+                container.addView(divider)
+            }
+        }
+        popup = PopupWindow(container, WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, true).apply {
+            // Transparent window background: no dim/mask over the content,
+            // and outside touches still dismiss the menu.
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            elevation = 8f * d
+        }
+        popup.showAsDropDown(anchor)
         app.activityLog.runtime("float_viewer", "menu", "shown")
     }
     /** #88 fix: show the app picker directly in the float window (an
